@@ -1,0 +1,8 @@
+{
+  "/turmas/page": "app/turmas/page.js",
+  "/login/page": "app/login/page.js",
+  "/alunos/page": "app/alunos/page.js",
+  "/documentos/page": "app/documentos/page.js",
+  "/notas/page": "app/notas/page.js",
+  "/usuarios/page": "app/usuarios/page.js"
+}

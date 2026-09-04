@@ -1,0 +1,2 @@
+Booting API with DATABASE_URL: postgresql://postgres:postgres@localhost:5432/pta
+Ô£ö createAuditLog stores an audit entry via the supplied prisma client (6.0315ms)

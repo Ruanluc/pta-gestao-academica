@@ -1,0 +1,119 @@
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+enum Role {
+  ADMIN
+  SECRETARIA
+  PROFESSOR
+}
+
+enum DocumentStatus {
+  VERDE_TUDO_CERTO
+  AMARELO_FALTA_AVALIACAO
+  VERMELHO_FALTA_DOCUMENTACAO
+}
+
+enum ApprovalStatus {
+  PENDENTE
+  APROVADO
+  REJEITADO
+}
+
+model User {
+  id        String    @id @default(uuid())
+  email     String    @unique
+  password  String
+  role      Role      @default(SECRETARIA)
+  deletedAt DateTime?
+  createdAt DateTime  @default(now())
+  updatedAt DateTime  @updatedAt
+
+  documents Document[]
+  grades    Grade[]
+  auditLogs AuditLog[]
+  magicLinks MagicLink[]
+}
+
+model Student {
+  id                  String        @id @default(uuid())
+  name                String
+  cpf                 String        @unique
+  email               String
+  phone               String?
+  birthDate           DateTime?
+  googleDriveFolderId String?
+  documentStatus      DocumentStatus @default(VERDE_TUDO_CERTO)
+  deletedAt           DateTime?
+  createdAt           DateTime      @default(now())
+  updatedAt           DateTime      @updatedAt
+
+  documents Document[]
+  grades    Grade[]
+}
+
+model Module {
+  id        String   @id @default(uuid())
+  name      String
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  grades Grade[]
+}
+
+model Document {
+  id              String         @id @default(uuid())
+  studentId       String
+  uploadedById    String?
+  driveUrl        String
+  approvalStatus  ApprovalStatus @default(PENDENTE)
+  createdAt       DateTime       @default(now())
+  updatedAt       DateTime       @updatedAt
+  deletedAt       DateTime?
+
+  student         Student        @relation(fields: [studentId], references: [id], onDelete: Cascade)
+  uploadedBy      User?          @relation(fields: [uploadedById], references: [id], onDelete: SetNull)
+}
+
+model Grade {
+  id         String   @id @default(uuid())
+  studentId  String
+  moduleId   String
+  value      Float
+  createdAt  DateTime @default(now())
+  updatedAt  DateTime @updatedAt
+  deletedAt  DateTime?
+
+  student    Student  @relation(fields: [studentId], references: [id], onDelete: Cascade)
+  module     Module   @relation(fields: [moduleId], references: [id], onDelete: Cascade)
+  createdBy  User?    @relation(fields: [createdById], references: [id], onDelete: SetNull)
+  createdById String?
+}
+
+model AuditLog {
+  id        String   @id @default(uuid())
+  action    String
+  userId    String?
+  entity    String
+  entityId  String
+  timestamp DateTime @default(now())
+  details   String?
+
+  user      User?    @relation(fields: [userId], references: [id], onDelete: SetNull)
+}
+
+model MagicLink {
+  id        String   @id @default(uuid())
+  token     String   @unique
+  userId    String
+  used      Boolean  @default(false)
+  expiresAt DateTime
+  createdAt DateTime @default(now())
+
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+}
