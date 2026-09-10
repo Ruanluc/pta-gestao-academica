@@ -1,73 +1,61 @@
-import 'reflect-metadata';
-import Fastify from 'fastify';
-import cors from '@fastify/cors';
-import jwt from '@fastify/jwt';
-import multipart from '@fastify/multipart';
-import dotenv from 'dotenv';
-import { resolve } from 'path';
-import { PrismaClient } from '@prisma/client';
-import { authRoutes } from './routes/auth';
-import { turmaRoutes } from './routes/turmas';
-import { alunoRoutes } from './routes/alunos';
-import { disciplinaRoutes } from './routes/disciplinas';
-import { matriculaRoutes } from './routes/matriculas';
-import { documentoRoutes } from './routes/documentos';
-import { notaRoutes } from './routes/notas';
-import { createHistoricoWorker, createPdfGenerationWorker } from './lib/queue';
-import { getAuthPayload } from './lib/auth';
+import { config } from './config';
+import { buildApp } from './app';
+import { prisma } from './lib/prisma';
+import { emailHabilitado } from './lib/mailer';
+import { encerrarFila, iniciarFila, modoFila } from './lib/queue';
+import { armazenamentoAtual } from './lib/storage';
+import { gerarHistoricoFinal } from './services/academico';
+import { statusCademi } from './lib/cademi';
+import { iniciarSincronizacaoAutomatica, pararSincronizacaoAutomatica } from './services/cademi';
 
-dotenv.config({ path: resolve(__dirname, '../.env') });
-
-if (!process.env.JWT_SECRET) {
-  throw new Error('JWT_SECRET deve ser definido no arquivo .env');
-}
-
-const app = Fastify({ logger: false });
-export const prisma = new PrismaClient();
-export const inMemoryStore = {
-  turmas: [] as any[],
-  alunos: [] as any[],
-};
-
-app.register(cors, { origin: true });
-app.register(jwt, { secret: process.env.JWT_SECRET });
-app.register(multipart, {
-  limits: {
-    fileSize: 50 * 1024 * 1024,
-    files: 1,
-  },
-});
-
-app.decorate('authenticate', async (request, reply) => {
-  const payload = await getAuthPayload(request, reply);
-  if (payload) {
-    request.auth = payload;
-  }
-});
-
-app.get('/health', async () => ({ ok: true }));
-
-app.register(authRoutes, { prefix: '/auth' });
-app.register(turmaRoutes, { prefix: '/turmas' });
-app.register(alunoRoutes, { prefix: '/alunos' });
-app.register(disciplinaRoutes, { prefix: '/disciplinas' });
-app.register(matriculaRoutes, { prefix: '/matriculas' });
-app.register(documentoRoutes, { prefix: '/documentos' });
-app.register(notaRoutes, { prefix: '/notas' });
-
-createHistoricoWorker();
-createPdfGenerationWorker();
-
-const start = async () => {
+const iniciar = async () => {
   try {
-    await app.listen({ port: 3000, host: '0.0.0.0' });
-    console.log('API running on http://localhost:3000');
-  } catch (err) {
-    console.error('Failed to start API:', err);
+    await prisma.$connect();
+  } catch (erro) {
+    console.error(
+      'Não foi possível conectar ao banco de dados. Confira DATABASE_URL em apps/api/.env e se o PostgreSQL está rodando.\n',
+      (erro as Error).message,
+    );
     process.exit(1);
   }
+
+  const app = await buildApp();
+  iniciarFila(gerarHistoricoFinal);
+  const cademiAutomatica = iniciarSincronizacaoAutomatica();
+
+  const encerrar = async (sinal: string) => {
+    console.info(`\n[api] ${sinal} recebido, encerrando...`);
+    await app.close().catch(() => undefined);
+    pararSincronizacaoAutomatica();
+    await encerrarFila();
+    await prisma.$disconnect();
+    process.exit(0);
+  };
+  process.once('SIGINT', () => void encerrar('SIGINT'));
+  process.once('SIGTERM', () => void encerrar('SIGTERM'));
+
+  await app.listen({ port: config.port, host: config.host });
+
+  console.info(
+    [
+      `API rodando em http://localhost:${config.port}`,
+      `  Armazenamento de arquivos: ${armazenamentoAtual() === 'google-drive' ? 'Google Drive' : `local (${config.storageDir})`}`,
+      `  E-mail: ${emailHabilitado() ? 'SMTP' : 'somente console (SMTP não configurado)'}`,
+      `  Fila de históricos: ${modoFila() === 'redis' ? 'Redis/BullMQ' : 'no próprio processo'}`,
+      `  Notas da Cademi: ${
+        {
+          desativada: 'não configurada',
+          pendente: 'configurada, aguardando a implementação da leitura de notas (src/lib/cademi.ts)',
+          ativa: cademiAutomatica
+            ? `ativa (importação automática a cada ${config.cademi.intervaloMinutos} min)`
+            : 'ativa (importação pelo botão na turma)',
+        }[statusCademi()]
+      }`,
+    ].join('\n'),
+  );
 };
 
-if (require.main === module) {
-  start();
-}
+iniciar().catch((erro) => {
+  console.error('Falha ao iniciar a API:', erro);
+  process.exit(1);
+});

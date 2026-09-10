@@ -1,39 +1,26 @@
 const STORAGE_KEY = 'pta-auth-token';
-const DEFAULT_API_URL = 'http://localhost:3000';
 
-export const getApiBaseUrl = () => process.env.NEXT_PUBLIC_API_URL || DEFAULT_API_URL;
+// Chaves usadas pela versão antiga, que guardava os dados no navegador
+const CHAVES_ANTIGAS = ['pta-turmas', 'pta-alunos', 'pta-matriculas', 'pta-modulos', 'pta-notas'];
 
-export const getAuthToken = () => {
-  if (typeof window === 'undefined') return null;
-  return localStorage.getItem(STORAGE_KEY);
-};
+export const getApiBaseUrl = () => (process.env.NEXT_PUBLIC_API_URL || 'http://localhost:3000').replace(/\/$/, '');
 
-export const setAuthToken = (token: string) => {
-  if (typeof window === 'undefined') return;
-  localStorage.setItem(STORAGE_KEY, token);
-};
-
-export const clearAuthToken = () => {
-  if (typeof window === 'undefined') return;
-  localStorage.removeItem(STORAGE_KEY);
-};
-
-export const apiFetch = async (path: string, options: RequestInit = {}) => {
-  const token = getAuthToken();
-  const headers = new Headers(options.headers || {});
-
-  if (!headers.has('Content-Type') && options.body) {
-    headers.set('Content-Type', 'application/json');
+const armazenamento = () => {
+  try {
+    return typeof window === 'undefined' ? null : window.localStorage;
+  } catch {
+    return null;
   }
+};
 
-  if (token) {
-    headers.set('Authorization', `Bearer ${token}`);
-  }
+export const getAuthToken = () => armazenamento()?.getItem(STORAGE_KEY) ?? null;
 
-  const response = await fetch(`${getApiBaseUrl()}${path}`, {
-    ...options,
-    headers,
-  });
+export const setAuthToken = (token: string) => armazenamento()?.setItem(STORAGE_KEY, token);
 
-  return response;
+export const clearAuthToken = () => armazenamento()?.removeItem(STORAGE_KEY);
+
+/** Remove dados que a versão antiga guardava no navegador (agora tudo vem da API). */
+export const limparDadosAntigos = () => {
+  const local = armazenamento();
+  CHAVES_ANTIGAS.forEach((chave) => local?.removeItem(chave));
 };

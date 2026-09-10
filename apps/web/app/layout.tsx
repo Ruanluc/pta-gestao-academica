@@ -1,15 +1,19 @@
 import './globals.css';
 import type { Metadata } from 'next';
+import type { ReactNode } from 'react';
+import { AppShell } from './components/AppShell';
 
 export const metadata: Metadata = {
   title: 'PTA Gestão Acadêmica',
-  description: 'MVP de gestão acadêmica de pós-graduação',
+  description: 'Gestão acadêmica de pós-graduação',
 };
 
-export default function RootLayout({ children }: { children: React.ReactNode }) {
+export default function RootLayout({ children }: { children: ReactNode }) {
   return (
     <html lang="pt-BR">
-      <body>{children}</body>
+      <body>
+        <AppShell>{children}</AppShell>
+      </body>
     </html>
   );
 }

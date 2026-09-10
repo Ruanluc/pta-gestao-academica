@@ -1,1 +1,18 @@
-node_modules
+node_modules/
+
+# builds
+apps/api/dist/
+apps/web/.next/
+*.tsbuildinfo
+
+# variáveis de ambiente (use os arquivos .env.example como modelo)
+.env
+.env.*
+!.env.example
+
+# logs
+*.log
+
+# dados locais
+apps/api/storage/
+*.db

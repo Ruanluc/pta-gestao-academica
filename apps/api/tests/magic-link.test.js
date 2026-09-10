@@ -1,84 +1,53 @@
+require('./setup');
 const test = require('node:test');
 const assert = require('node:assert/strict');
 
-const { createToken, verifyToken, hasRequiredRole } = require('../dist/lib/auth');
-const { prisma } = require('../dist/main');
+const { consumirMagicLink, criarMagicLink, hashToken } = require('../dist/lib/magicLink');
 
-test.after(async () => {
-  await prisma.$disconnect().catch(() => undefined);
-});
-const { createAuditLog } = require('../dist/lib/audit');
-const {
-  buildMagicLinkExpiration,
-  createMagicLinkRecord,
-  validateMagicLinkToken,
-  consumeMagicLinkToken,
-} = require('../dist/lib/magicLink');
-
-test('createToken and verifyToken round-trip user payload without a Fastify request', () => {
-  const payload = { id: 'user-1', role: 'ADMIN' };
-  const token = createToken(payload);
-  const decoded = verifyToken(token);
-
-  assert.equal(decoded.id, payload.id);
-  assert.equal(decoded.role, payload.role);
-});
-
-test('hasRequiredRole returns true only for allowed roles', () => {
-  assert.equal(hasRequiredRole('ADMIN', ['ADMIN', 'SECRETARIA']), true);
-  assert.equal(hasRequiredRole('PROFESSOR', ['ADMIN', 'SECRETARIA']), false);
-  assert.equal(hasRequiredRole('SECRETARIA', ['ADMIN', 'SECRETARIA']), true);
-});
-
-test('createAuditLog stores a real audit entry for the supplied prisma client', async () => {
-  const created = [];
-  const prismaStub = {
-    auditLog: {
-      create: async ({ data }) => {
-        created.push(data);
-        return { id: 'log-1', ...data };
-      },
-    },
-  };
-
-  await createAuditLog('user-1', 'LOGIN', { result: 'ok' }, prismaStub);
-
-  assert.equal(created.length, 1);
-  assert.equal(created[0].userId, 'user-1');
-  assert.equal(created[0].action, 'LOGIN');
-  assert.equal(created[0].details, '{"result":"ok"}');
-});
-
-test('magic-link helpers create, validate and consume a token', async () => {
-  const created = [];
-  const prismaStub = {
+const criarStub = () => {
+  const registros = [];
+  return {
+    registros,
     magicLink: {
       create: async ({ data }) => {
-        created.push(data);
-        return { id: 'magic-1', ...data };
+        const registro = { id: `link-${registros.length + 1}`, usado: false, ...data };
+        registros.push(registro);
+        return registro;
       },
-      findUnique: async ({ where }) => {
-        const record = created.find((item) => item.token === where.token);
-        if (!record) return null;
-        return { id: 'magic-1', ...record, used: false, expiresAt: new Date(Date.now() + 60_000) };
-      },
-      update: async ({ where, data }) => {
-        const record = created.find((item) => item.id === where.id);
-        if (!record) return null;
-        record.used = data.used;
-        return { id: 'magic-1', ...record };
+      findUnique: async ({ where }) => registros.find((registro) => registro.tokenHash === where.tokenHash) ?? null,
+      updateMany: async ({ where, data }) => {
+        const alvo = registros.find((registro) => registro.id === where.id && registro.usado === where.usado);
+        if (!alvo) return { count: 0 };
+        Object.assign(alvo, data);
+        return { count: 1 };
       },
     },
   };
+};
 
-  const token = 'token-123';
-  const createdLink = await createMagicLinkRecord(prismaStub, 'user-1', token);
-  assert.equal(createdLink.token, token);
-  assert.equal(createdLink.userId, 'user-1');
+test('o banco guarda apenas o hash do token', async () => {
+  const stub = criarStub();
+  const token = await criarMagicLink(stub, 'usuario-1');
 
-  const validated = await validateMagicLinkToken(prismaStub, token);
-  assert.equal(validated?.token, token);
+  assert.equal(stub.registros.length, 1);
+  assert.notEqual(stub.registros[0].tokenHash, token);
+  assert.equal(stub.registros[0].tokenHash, hashToken(token));
+});
 
-  const consumed = await consumeMagicLinkToken(prismaStub, validated.id);
-  assert.equal(consumed.used, true);
+test('o link funciona uma única vez', async () => {
+  const stub = criarStub();
+  const token = await criarMagicLink(stub, 'usuario-1');
+
+  const primeiro = await consumirMagicLink(stub, token);
+  assert.equal(primeiro?.usuarioId, 'usuario-1');
+  assert.equal(await consumirMagicLink(stub, token), null);
+});
+
+test('link expirado ou desconhecido é recusado', async () => {
+  const stub = criarStub();
+  const token = await criarMagicLink(stub, 'usuario-1');
+  stub.registros[0].expiraEm = new Date(Date.now() - 1000);
+
+  assert.equal(await consumirMagicLink(stub, token), null);
+  assert.equal(await consumirMagicLink(stub, 'token-que-nao-existe'), null);
 });

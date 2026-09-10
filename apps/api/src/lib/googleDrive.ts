@@ -1,108 +1,122 @@
-import { google } from 'googleapis';
-import { PassThrough } from 'stream';
+import type { Readable } from 'stream';
+import { google, type drive_v3 } from 'googleapis';
+import { config } from '../config';
 
-const streamToPassThrough = (stream: NodeJS.ReadableStream): PassThrough => {
-  const passThrough = new PassThrough();
-  stream.on('data', (chunk) => passThrough.write(chunk));
-  stream.on('end', () => passThrough.end());
-  stream.on('error', (error) => passThrough.destroy(error));
-  return passThrough;
-};
+const ESCOPOS = ['https://www.googleapis.com/auth/drive'];
 
-export type DriveUploadInput = {
-  stream: NodeJS.ReadableStream;
-  filename: string;
-  mimeType: string;
-  folderId?: string | null;
-};
+let cliente: drive_v3.Drive | null | undefined;
 
-export type DriveUploadResult = {
-  fileId: string;
-  webViewLink: string;
-  mimeType: string;
-};
+/**
+ * Ordem de preferência das credenciais:
+ * 1. OAuth de um usuário (GOOGLE_OAUTH_*) — necessário para contas Gmail pessoais,
+ *    pois contas de serviço não têm cota de armazenamento no "Meu Drive".
+ * 2. Conta de serviço (JSON inteiro, e-mail + chave privada, ou arquivo de credenciais) —
+ *    funciona com Drives compartilhados do Google Workspace.
+ */
+const criarAutenticacao = () => {
+  const google_ = config.google;
 
-const getDriveAuth = async () => {
-  const serviceAccountJson = process.env.GOOGLE_SERVICE_ACCOUNT_JSON;
-
-  if (serviceAccountJson) {
-    const credentials = JSON.parse(serviceAccountJson);
-    const auth = new google.auth.GoogleAuth({
-      credentials,
-      scopes: ['https://www.googleapis.com/auth/drive.file'],
-    });
-    return auth;
+  if (google_.oauthClientId && google_.oauthClientSecret && google_.oauthRefreshToken) {
+    const oauth = new google.auth.OAuth2(google_.oauthClientId, google_.oauthClientSecret);
+    oauth.setCredentials({ refresh_token: google_.oauthRefreshToken });
+    return oauth;
   }
 
-  if (process.env.GOOGLE_APPLICATION_CREDENTIALS) {
-    const auth = new google.auth.GoogleAuth({
-      keyFile: process.env.GOOGLE_APPLICATION_CREDENTIALS,
-      scopes: ['https://www.googleapis.com/auth/drive.file'],
-    });
-    return auth;
+  if (google_.serviceAccountJson) {
+    return new google.auth.GoogleAuth({ credentials: JSON.parse(google_.serviceAccountJson), scopes: ESCOPOS });
   }
 
-  throw new Error('Credenciais do Google Drive não configuradas');
+  if (google_.serviceAccountEmail && google_.privateKey) {
+    return new google.auth.JWT({ email: google_.serviceAccountEmail, key: google_.privateKey, scopes: ESCOPOS });
+  }
+
+  if (google_.applicationCredentials) {
+    return new google.auth.GoogleAuth({ keyFile: google_.applicationCredentials, scopes: ESCOPOS });
+  }
+
+  return null;
 };
 
-export const uploadToGoogleDrive = async ({ stream, filename, mimeType, folderId }: DriveUploadInput): Promise<DriveUploadResult> => {
-  const auth = await getDriveAuth();
-  const client = await auth.getClient();
-  const accessToken = await client.getAccessToken();
+const obterDrive = () => {
+  if (cliente !== undefined) return cliente;
 
-  if (!accessToken.token) {
-    throw new Error('Não foi possível obter token de acesso do Google Drive');
+  if (!config.google.pastaRaizId) {
+    cliente = null;
+    return cliente;
   }
 
-  const initResponse = await fetch('https://www.googleapis.com/upload/drive/v3/files?uploadType=resumable', {
-    method: 'POST',
-    headers: {
-      Authorization: `Bearer ${accessToken.token}`,
-      'Content-Type': 'application/json; charset=utf-8',
-      'X-Upload-Content-Type': mimeType,
-      'X-Upload-Content-Length': '0',
+  try {
+    const auth = criarAutenticacao();
+    cliente = auth ? google.drive({ version: 'v3', auth }) : null;
+  } catch (erro) {
+    console.error('[drive] credenciais do Google inválidas:', (erro as Error).message);
+    cliente = null;
+  }
+
+  return cliente;
+};
+
+/** O Drive só é usado quando há credenciais e uma pasta raiz (GOOGLE_DRIVE_FOLDER_ID). */
+export const driveHabilitado = () => obterDrive() !== null;
+
+/** Envio de cada arquivo ao Drive no momento do upload (desligado por padrão; hoje a exportação é manual). */
+export const envioAutomaticoDrive = () => config.google.envioAutomatico && driveHabilitado();
+
+export const linkPastaDrive = (pastaId: string) => `https://drive.google.com/drive/folders/${pastaId}`;
+
+const exigirDrive = () => {
+  const drive = obterDrive();
+  if (!drive) throw new Error('Google Drive não configurado');
+  return drive;
+};
+
+export const criarPastaDrive = async (nome: string, pastaPaiId = config.google.pastaRaizId) => {
+  const { data } = await exigirDrive().files.create({
+    requestBody: {
+      name: nome,
+      mimeType: 'application/vnd.google-apps.folder',
+      parents: pastaPaiId ? [pastaPaiId] : undefined,
     },
-    body: JSON.stringify({
-      name: filename,
-      mimeType,
-      parents: folderId ? [folderId] : undefined,
-    }),
+    fields: 'id',
+    supportsAllDrives: true,
   });
 
-  if (!initResponse.ok) {
-    const errorText = await initResponse.text();
-    throw new Error(`Falha ao iniciar upload no Google Drive: ${errorText}`);
-  }
+  if (!data.id) throw new Error('O Google Drive não retornou o ID da pasta criada');
+  return data.id;
+};
 
-  const uploadUrl = initResponse.headers.get('location');
-  if (!uploadUrl) {
-    throw new Error('Google Drive não retornou URL de upload resumável');
-  }
+export const enviarArquivoDrive = async ({
+  stream,
+  nome,
+  mimeType,
+  pastaId,
+}: {
+  stream: Readable;
+  nome: string;
+  mimeType: string;
+  pastaId?: string | null;
+}) => {
+  const pasta = pastaId ?? config.google.pastaRaizId;
 
-  const uploadStream = streamToPassThrough(stream);
-  const uploadResponse = await fetch(uploadUrl, {
-    method: 'PUT',
-    headers: {
-      Authorization: `Bearer ${accessToken.token}`,
-      'Content-Type': mimeType,
-    },
-    body: uploadStream as unknown as Uint8Array | Blob | ArrayBuffer | ReadableStream | string,
+  const { data } = await exigirDrive().files.create({
+    requestBody: { name: nome, parents: pasta ? [pasta] : undefined },
+    media: { mimeType, body: stream },
+    fields: 'id, webViewLink',
+    supportsAllDrives: true,
   });
 
-  if (!uploadResponse.ok) {
-    const errorText = await uploadResponse.text();
-    throw new Error(`Falha ao completar upload no Google Drive: ${errorText}`);
-  }
+  if (!data.id) throw new Error('O Google Drive não retornou o ID do arquivo enviado');
+  return { id: data.id, link: data.webViewLink ?? null };
+};
 
-  const uploadedFile = (await uploadResponse.json()) as { id?: string; webViewLink?: string; mimeType?: string };
+export const baixarArquivoDrive = async (fileId: string) => {
+  const resposta = await exigirDrive().files.get(
+    { fileId, alt: 'media', supportsAllDrives: true },
+    { responseType: 'stream' },
+  );
+  return resposta.data as unknown as Readable;
+};
 
-  if (!uploadedFile.id) {
-    throw new Error('Google Drive não retornou o identificador do arquivo enviado');
-  }
-
-  return {
-    fileId: uploadedFile.id,
-    webViewLink: uploadedFile.webViewLink ?? '',
-    mimeType: uploadedFile.mimeType ?? mimeType,
-  };
+export const removerArquivoDrive = async (fileId: string) => {
+  await exigirDrive().files.delete({ fileId, supportsAllDrives: true });
 };

@@ -1,28 +1,60 @@
+require('./setup');
 const test = require('node:test');
 const assert = require('node:assert/strict');
+const jwt = require('jsonwebtoken');
 
-const { createToken, verifyToken, hasRequiredRole } = require('../dist/lib/auth');
-const { prisma } = require('../dist/main');
+const { createToken, hasRequiredRole, verifyToken } = require('../dist/lib/auth');
+const { buildApp } = require('../dist/app');
+const { prisma } = require('../dist/lib/prisma');
 
-const cleanup = async () => {
-  await prisma.$disconnect().catch(() => undefined);
-};
+let app;
+
+test.before(async () => {
+  app = await buildApp({ logger: false });
+});
 
 test.after(async () => {
-  await cleanup();
+  await app.close();
+  await prisma.$disconnect().catch(() => undefined);
 });
 
-test('createToken and verifyToken round-trip user payload', () => {
-  const payload = { id: 'user-1', role: 'ADMIN' };
-  const token = createToken(payload);
-  const decoded = verifyToken(token);
-
-  assert.equal(decoded.id, payload.id);
-  assert.equal(decoded.role, payload.role);
+test('createToken e verifyToken preservam id e perfil', () => {
+  const token = createToken({ id: 'usuario-1', role: 'ADMIN' });
+  assert.deepEqual(verifyToken(token), { id: 'usuario-1', role: 'ADMIN' });
 });
 
-test('hasRequiredRole returns true only for allowed roles', () => {
+test('verifyToken recusa token assinado com outro segredo', () => {
+  const falso = jwt.sign({ id: 'usuario-1', role: 'ADMIN' }, 'outro-segredo-qualquer-com-32-caracteres');
+  assert.throws(() => verifyToken(falso));
+});
+
+test('hasRequiredRole aceita apenas perfis permitidos', () => {
   assert.equal(hasRequiredRole('ADMIN', ['ADMIN', 'SECRETARIA']), true);
   assert.equal(hasRequiredRole('PROFESSOR', ['ADMIN', 'SECRETARIA']), false);
-  assert.equal(hasRequiredRole('SECRETARIA', ['ADMIN', 'SECRETARIA']), true);
+});
+
+test('rotas protegidas exigem token', async () => {
+  for (const url of ['/alunos', '/turmas', '/documentos', '/usuarios', '/notas', '/dashboard']) {
+    const resposta = await app.inject({ method: 'GET', url });
+    assert.equal(resposta.statusCode, 401, url);
+    assert.equal(resposta.json().message, 'Token de acesso ausente');
+  }
+});
+
+test('token inválido é recusado', async () => {
+  const resposta = await app.inject({ method: 'GET', url: '/alunos', headers: { authorization: 'Bearer abc.def.ghi' } });
+  assert.equal(resposta.statusCode, 401);
+  assert.equal(resposta.json().message, 'Sessão inválida ou expirada');
+});
+
+test('login valida os dados antes de consultar o banco', async () => {
+  const resposta = await app.inject({ method: 'POST', url: '/auth/login', payload: { email: 'nao-e-email', senha: 'x' } });
+  assert.equal(resposta.statusCode, 400);
+  assert.equal(resposta.json().message, 'E-mail inválido');
+});
+
+test('rota inexistente responde 404 em português', async () => {
+  const resposta = await app.inject({ method: 'GET', url: '/nao-existe' });
+  assert.equal(resposta.statusCode, 404);
+  assert.equal(resposta.json().message, 'Rota não encontrada');
 });

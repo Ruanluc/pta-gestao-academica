@@ -1,84 +1,62 @@
 'use client';
 
-import { useEffect, useState } from 'react';
-import { apiFetch } from '../lib/auth';
+import { useCallback, useEffect, useState } from 'react';
+import { api } from '../lib/api';
+import { ROTULOS_DOCUMENTO, ROTULOS_STATUS_DOCUMENTO, type Documento, type StatusDocumento, type TipoDocumento } from '../lib/tipos';
+import { ListaDocumentos } from '../components/Documentos';
+import { Aviso, Cabecalho, Carregando, Cartao, useMensagem } from '../components/ui';
 
 export default function DocumentosPage() {
-  const [documentos, setDocumentos] = useState<any[]>([]);
-  const [file, setFile] = useState<File | null>(null);
-  const [loading, setLoading] = useState(false);
-  const [message, setMessage] = useState('');
+  const [documentos, setDocumentos] = useState<Documento[] | null>(null);
+  const [status, setStatus] = useState<StatusDocumento | ''>('PENDENTE');
+  const [tipo, setTipo] = useState<TipoDocumento | ''>('');
+  const { mensagem, erro } = useMensagem();
 
-  const loadDocumentos = async () => {
+  const carregar = useCallback(async () => {
+    const parametros = new URLSearchParams();
+    if (status) parametros.set('status', status);
+    if (tipo) parametros.set('tipo', tipo);
     try {
-      const response = await apiFetch('/documentos');
-      if (response.ok) {
-        setDocumentos(await response.json());
-      }
-    } catch {
-      setDocumentos([]);
+      setDocumentos(await api<Documento[]>(`/documentos?${parametros}`));
+    } catch (falha) {
+      erro(falha);
     }
-  };
+  }, [status, tipo, erro]);
 
   useEffect(() => {
-    loadDocumentos();
-  }, []);
-
-  const handleUpload = async (event: React.FormEvent) => {
-    event.preventDefault();
-    if (!file) return;
-
-    setLoading(true);
-    setMessage('');
-
-    const formData = new FormData();
-    formData.append('file', file);
-
-    try {
-      const response = await apiFetch('/documentos/upload', {
-        method: 'POST',
-        body: formData,
-      });
-
-      if (!response.ok) throw new Error('Falha ao enviar arquivo');
-      setMessage('Arquivo enviado com sucesso.');
-      setFile(null);
-      await loadDocumentos();
-    } catch (error: any) {
-      setMessage(error.message || 'Erro ao enviar arquivo');
-    } finally {
-      setLoading(false);
-    }
-  };
+    void carregar();
+  }, [carregar]);
 
   return (
-    <main className="min-h-screen bg-slate-50 p-8">
-      <div className="mx-auto max-w-5xl rounded-2xl bg-white p-8 shadow-sm">
-        <h1 className="text-2xl font-semibold">Documentos</h1>
-        <p className="mt-2 text-slate-600">Fluxo de análise de documentos com status e justificativas de rejeição.</p>
-        <form onSubmit={handleUpload} className="mt-6 rounded-2xl border border-slate-200 bg-slate-50 p-4">
-          <label className="block text-sm font-medium text-slate-700">
-            Escolher arquivo
-            <input type="file" onChange={(event) => setFile(event.target.files?.[0] ?? null)} className="mt-2 block w-full text-sm text-slate-600" required />
-          </label>
-          <button type="submit" disabled={loading} className="mt-4 rounded-lg bg-indigo-600 px-4 py-2 text-sm font-medium text-white disabled:opacity-70">
-            {loading ? 'Enviando...' : 'Enviar documento'}
-          </button>
-          {message ? <p className="mt-3 text-sm text-slate-600">{message}</p> : null}
-        </form>
+    <div>
+      <Cabecalho
+        titulo="Documentos"
+        descricao="Análise da documentação enviada. Para enviar um documento, abra a página do aluno."
+      />
 
-        <div className="mt-6 space-y-3">
-          {documentos.length === 0 ? <p className="text-slate-500">Nenhum documento enviado ainda.</p> : documentos.map((doc) => (
-            <div key={doc.id} className="rounded-xl border p-4">
-              <div className="flex items-center justify-between">
-                <strong>{doc.tipo}</strong>
-                <span className="rounded-full bg-slate-100 px-3 py-1 text-xs font-medium">{doc.status}</span>
-              </div>
-              <p className="mt-2 text-sm text-slate-600">Aluno: {doc.aluno?.nome}</p>
-            </div>
-          ))}
+      <Cartao>
+        <div className="mb-4 flex flex-wrap gap-3">
+          <select value={status} onChange={(evento) => setStatus(evento.target.value as StatusDocumento | '')} className="input mt-0 w-auto">
+            <option value="">Todos os status</option>
+            {(Object.keys(ROTULOS_STATUS_DOCUMENTO) as StatusDocumento[]).map((valor) => (
+              <option key={valor} value={valor}>
+                {ROTULOS_STATUS_DOCUMENTO[valor]}
+              </option>
+            ))}
+          </select>
+          <select value={tipo} onChange={(evento) => setTipo(evento.target.value as TipoDocumento | '')} className="input mt-0 w-auto">
+            <option value="">Todos os tipos</option>
+            {(Object.keys(ROTULOS_DOCUMENTO) as TipoDocumento[]).map((valor) => (
+              <option key={valor} value={valor}>
+                {ROTULOS_DOCUMENTO[valor]}
+              </option>
+            ))}
+          </select>
         </div>
-      </div>
-    </main>
+
+        <Aviso mensagem={mensagem} />
+        {documentos ? <ListaDocumentos documentos={documentos} onAlterado={() => void carregar()} mostrarAluno /> : !mensagem && <Carregando />}
+      </Cartao>
+    </div>
   );
 }

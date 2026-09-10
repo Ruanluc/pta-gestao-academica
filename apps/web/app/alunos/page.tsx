@@ -1,237 +1,142 @@
 'use client';
 
-import { useEffect, useState } from 'react';
+import Link from 'next/link';
 import { useRouter } from 'next/navigation';
-import { apiFetch, getAuthToken } from '../lib/auth';
-
-const STORAGE_KEY = 'pta-alunos';
-
-const getStatusConfig = (status?: string) => {
-  switch (status) {
-    case 'VERMELHO_FALTA_DOCUMENTACAO':
-      return {
-        label: 'Falta documentação',
-        icon: '●',
-        className: 'border-red-200 bg-red-50 text-red-700',
-      };
-    case 'AMARELO_FALTA_AVALIACAO':
-      return {
-        label: 'Falta avaliação',
-        icon: '●',
-        className: 'border-amber-200 bg-amber-50 text-amber-700',
-      };
-    case 'VERDE_TUDO_CERTO':
-    default:
-      return {
-        label: 'Tudo certo',
-        icon: '●',
-        className: 'border-emerald-200 bg-emerald-50 text-emerald-700',
-      };
-  }
-};
+import { useCallback, useEffect, useState } from 'react';
+import { Plus, Search } from 'lucide-react';
+import { api } from '../lib/api';
+import { mascararCpf } from '../lib/formato';
+import { ROTULOS_SEMAFORO, type Aluno, type AlunoLista, type StatusSemaforo } from '../lib/tipos';
+import { useUsuario } from '../components/AppShell';
+import { AlunoForm } from '../components/AlunoForm';
+import { Aviso, Cabecalho, Carregando, Cartao, SemaforoBadge, useMensagem, Vazio } from '../components/ui';
 
 export default function AlunosPage() {
   const router = useRouter();
-  const [alunos, setAlunos] = useState<any[]>([]);
-  const [loading, setLoading] = useState(false);
-  const [message, setMessage] = useState('');
-  const [form, setForm] = useState({
-    nome: '',
-    cpf: '',
-    email: '',
-    telefone: '',
-    dataNascimento: '',
-    nacionalidade: '',
-    naturalidade: '',
-    filiacao: '',
-    rgNumero: '',
-    rgOrgaoEmissor: '',
-    condicaoGraduacao: 'CURSANDO',
-  });
+  const { usuario } = useUsuario();
+  const podeCadastrar = usuario.role !== 'PROFESSOR';
 
-  const saveAlunos = (nextAlunos: any[]) => {
-    setAlunos(nextAlunos);
-    localStorage.setItem(STORAGE_KEY, JSON.stringify(nextAlunos));
-  };
-
-  const loadAlunos = async () => {
-    const token = getAuthToken();
-    if (!token) {
-      router.replace('/login');
-      return;
-    }
-
-    try {
-      const res = await apiFetch('/alunos');
-      if (res.ok) {
-        const data = await res.json();
-        const nextAlunos = Array.isArray(data) ? data : [];
-        saveAlunos(nextAlunos);
-        return;
-      }
-    } catch {
-      // fallback to local persistence
-    }
-
-    const saved = localStorage.getItem(STORAGE_KEY);
-    if (saved) {
-      try {
-        saveAlunos(JSON.parse(saved));
-      } catch {
-        saveAlunos([]);
-      }
-    } else {
-      saveAlunos([]);
-    }
-  };
+  const [alunos, setAlunos] = useState<AlunoLista[]>([]);
+  const [carregando, setCarregando] = useState(true);
+  const [busca, setBusca] = useState('');
+  const [status, setStatus] = useState<StatusSemaforo | ''>('');
+  const [mostrarForm, setMostrarForm] = useState(false);
+  const [pronto, setPronto] = useState(false);
+  const { mensagem, erro, limpar } = useMensagem();
 
   useEffect(() => {
-    loadAlunos();
+    const parametros = new URLSearchParams(window.location.search);
+    setStatus((parametros.get('status') as StatusSemaforo | null) ?? '');
+    setPronto(true);
   }, []);
 
-  const handleChange = (event: any) => {
-    const { name, value } = event.target;
-    setForm((prev) => ({ ...prev, [name]: value }));
-  };
+  const carregar = useCallback(async () => {
+    const parametros = new URLSearchParams();
+    if (busca.trim()) parametros.set('busca', busca.trim());
+    if (status) parametros.set('status', status);
 
-  const handleSubmit = async (event: any) => {
-    event.preventDefault();
-    setLoading(true);
-    setMessage('');
-
+    setCarregando(true);
     try {
-      const payload = {
-        ...form,
-        dataNascimento: form.dataNascimento ? new Date(form.dataNascimento).toISOString() : null,
-      };
-
-      const res = await apiFetch('/alunos', {
-        method: 'POST',
-        body: JSON.stringify(payload),
-      });
-
-      if (!res.ok && res.status !== 201) {
-        const errorText = await res.text();
-        throw new Error(`Erro ${res.status}: ${errorText || 'Não foi possível cadastrar'}`);
-      }
-
-      const created = await res.json();
-      const novoAluno = created || {
-        id: `aluno-${Date.now()}`,
-        ...payload,
-      };
-
-      const nextAlunos = [novoAluno, ...alunos];
-      saveAlunos(nextAlunos);
-
-      setMessage('✓ Aluno cadastrado com sucesso.');
-      setForm({
-        nome: '',
-        cpf: '',
-        email: '',
-        telefone: '',
-        dataNascimento: '',
-        nacionalidade: '',
-        naturalidade: '',
-        filiacao: '',
-        rgNumero: '',
-        rgOrgaoEmissor: '',
-        condicaoGraduacao: 'CURSANDO',
-      });
-    } catch (error: any) {
-      console.error('Erro ao cadastrar aluno:', error);
-      setMessage(`✗ ${error.message || 'Erro ao cadastrar aluno.'}`);
+      setAlunos(await api<AlunoLista[]>(`/alunos?${parametros}`));
+      limpar();
+    } catch (falha) {
+      erro(falha);
     } finally {
-      setLoading(false);
+      setCarregando(false);
     }
+  }, [busca, status, erro, limpar]);
+
+  useEffect(() => {
+    if (!pronto) return;
+    const espera = setTimeout(() => void carregar(), 300);
+    return () => clearTimeout(espera);
+  }, [carregar, pronto]);
+
+  const aoCadastrar = (aluno: Aluno) => {
+    router.push(`/alunos/${aluno.id}`);
   };
 
   return (
-    <main className="min-h-screen bg-slate-50 p-8">
-      <div className="mx-auto max-w-6xl rounded-2xl bg-white p-8 shadow-sm">
-        <h1 className="text-2xl font-semibold">Alunos</h1>
-        <p className="mt-2 text-slate-600">Cadastro manual de alunos como alternativa ao fluxo de documentação completa.</p>
-
-        <form onSubmit={handleSubmit} className="mt-6 rounded-2xl border border-slate-200 bg-slate-50 p-4">
-          <div className="grid gap-4 md:grid-cols-2">
-            <label className="text-sm font-medium text-slate-700">
-              Nome completo
-              <input name="nome" value={form.nome} onChange={handleChange} required className="mt-1 w-full rounded-lg border border-slate-300 px-3 py-2" />
-            </label>
-            <label className="text-sm font-medium text-slate-700">
-              CPF
-              <input name="cpf" value={form.cpf} onChange={handleChange} required className="mt-1 w-full rounded-lg border border-slate-300 px-3 py-2" />
-            </label>
-            <label className="text-sm font-medium text-slate-700">
-              E-mail
-              <input type="email" name="email" value={form.email} onChange={handleChange} required className="mt-1 w-full rounded-lg border border-slate-300 px-3 py-2" />
-            </label>
-            <label className="text-sm font-medium text-slate-700">
-              Telefone
-              <input name="telefone" value={form.telefone} onChange={handleChange} className="mt-1 w-full rounded-lg border border-slate-300 px-3 py-2" />
-            </label>
-            <label className="text-sm font-medium text-slate-700">
-              Data de nascimento
-              <input type="date" name="dataNascimento" value={form.dataNascimento} onChange={handleChange} className="mt-1 w-full rounded-lg border border-slate-300 px-3 py-2" />
-            </label>
-            <label className="text-sm font-medium text-slate-700">
-              Condição de graduação
-              <select name="condicaoGraduacao" value={form.condicaoGraduacao} onChange={handleChange} className="mt-1 w-full rounded-lg border border-slate-300 px-3 py-2">
-                <option value="CURSANDO">Cursando</option>
-                <option value="CONCLUIDO_COM_DIPLOMA">Concluído com diploma</option>
-                <option value="CONCLUIDO_SEM_DIPLOMA">Concluído sem diploma</option>
-              </select>
-            </label>
-            <label className="text-sm font-medium text-slate-700">
-              Nacionalidade
-              <input name="nacionalidade" value={form.nacionalidade} onChange={handleChange} className="mt-1 w-full rounded-lg border border-slate-300 px-3 py-2" />
-            </label>
-            <label className="text-sm font-medium text-slate-700">
-              Naturalidade
-              <input name="naturalidade" value={form.naturalidade} onChange={handleChange} className="mt-1 w-full rounded-lg border border-slate-300 px-3 py-2" />
-            </label>
-            <label className="text-sm font-medium text-slate-700 md:col-span-2">
-              Nome da mãe
-              <input name="filiacao" value={form.filiacao} onChange={handleChange} className="mt-1 w-full rounded-lg border border-slate-300 px-3 py-2" />
-            </label>
-            <label className="text-sm font-medium text-slate-700">
-              RG
-              <input name="rgNumero" value={form.rgNumero} onChange={handleChange} className="mt-1 w-full rounded-lg border border-slate-300 px-3 py-2" />
-            </label>
-            <label className="text-sm font-medium text-slate-700">
-              Órgão emissor
-              <input name="rgOrgaoEmissor" value={form.rgOrgaoEmissor} onChange={handleChange} className="mt-1 w-full rounded-lg border border-slate-300 px-3 py-2" />
-            </label>
-          </div>
-          <div className="mt-4 flex items-center gap-3">
-            <button type="submit" disabled={loading} className="rounded-lg bg-indigo-600 px-4 py-2 text-sm font-medium text-white disabled:opacity-70">
-              {loading ? 'Cadastrando...' : 'Cadastrar aluno'}
+    <div>
+      <Cabecalho
+        titulo="Alunos"
+        descricao="Cadastro, documentação e situação acadêmica de cada aluno."
+        acoes={
+          podeCadastrar && !mostrarForm ? (
+            <button type="button" onClick={() => setMostrarForm(true)} className="btn btn-primario">
+              <Plus className="h-4 w-4" /> Novo aluno
             </button>
-            {message ? <span className="text-sm text-slate-600">{message}</span> : null}
-          </div>
-        </form>
+          ) : null
+        }
+      />
 
-        <div className="mt-8 grid gap-4 md:grid-cols-2">
-          {alunos.length === 0 ? <p className="text-slate-500">Nenhum aluno cadastrado ainda.</p> : alunos.map((aluno) => {
-            const status = getStatusConfig(aluno.documentStatus);
-            return (
-              <div key={aluno.id} className="rounded-xl border border-slate-200 p-4">
-                <div className="flex items-start justify-between gap-3">
-                  <div>
-                    <h2 className="font-semibold">{aluno.name ?? aluno.nome}</h2>
-                    <p className="mt-1 text-sm text-slate-600">CPF: {aluno.cpf}</p>
-                    <p className="text-sm text-slate-600">E-mail: {aluno.email}</p>
-                  </div>
-                  <span className={`inline-flex items-center gap-2 rounded-full border px-3 py-1 text-sm font-medium ${status.className}`}>
-                    <span className="text-base leading-none">{status.icon}</span>
-                    {status.label}
-                  </span>
-                </div>
-              </div>
-            );
-          })}
+      {mostrarForm ? (
+        <Cartao titulo="Novo aluno" className="mb-6">
+          <AlunoForm onSalvo={aoCadastrar} onCancelar={() => setMostrarForm(false)} />
+        </Cartao>
+      ) : null}
+
+      <Cartao>
+        <div className="mb-4 flex flex-wrap gap-3">
+          <div className="relative min-w-[240px] flex-1">
+            <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-400" />
+            <input
+              value={busca}
+              onChange={(evento) => setBusca(evento.target.value)}
+              placeholder="Buscar por nome, CPF ou e-mail"
+              className="input mt-0 pl-9"
+            />
+          </div>
+          <select value={status} onChange={(evento) => setStatus(evento.target.value as StatusSemaforo | '')} className="input mt-0 w-auto">
+            <option value="">Todas as situações</option>
+            {(Object.keys(ROTULOS_SEMAFORO) as StatusSemaforo[]).map((valor) => (
+              <option key={valor} value={valor}>
+                {ROTULOS_SEMAFORO[valor]}
+              </option>
+            ))}
+          </select>
         </div>
-      </div>
-    </main>
+
+        <Aviso mensagem={mensagem} />
+
+        {carregando && alunos.length === 0 ? (
+          <Carregando />
+        ) : alunos.length === 0 ? (
+          <Vazio>{busca || status ? 'Nenhum aluno encontrado com esses filtros.' : 'Nenhum aluno cadastrado ainda.'}</Vazio>
+        ) : (
+          <div className="overflow-x-auto rounded-xl border border-slate-200">
+            <table className="tabela">
+              <thead>
+                <tr>
+                  <th>Nome</th>
+                  <th>CPF</th>
+                  <th className="hidden md:table-cell">Turmas</th>
+                  <th>Situação</th>
+                </tr>
+              </thead>
+              <tbody>
+                {alunos.map((aluno) => (
+                  <tr key={aluno.id} className="hover:bg-slate-50">
+                    <td>
+                      <Link href={`/alunos/${aluno.id}`} className="link">
+                        {aluno.nome}
+                      </Link>
+                      <p className="text-xs text-slate-500">{aluno.email}</p>
+                    </td>
+                    <td className="whitespace-nowrap text-slate-600">{mascararCpf(aluno.cpf)}</td>
+                    <td className="hidden text-slate-600 md:table-cell">
+                      {aluno.matriculas.length ? aluno.matriculas.map((matricula) => matricula.turma.nome).join(', ') : '—'}
+                    </td>
+                    <td>
+                      <SemaforoBadge status={aluno.statusSemaforo} />
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        )}
+      </Cartao>
+    </div>
   );
 }

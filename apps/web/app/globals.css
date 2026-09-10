@@ -7,5 +7,59 @@
 }
 
 body {
-  @apply bg-slate-50 text-slate-900;
+  @apply bg-slate-50 text-slate-900 antialiased;
+}
+
+@layer components {
+  .input {
+    @apply mt-1 w-full rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm font-normal text-slate-900 outline-none transition placeholder:text-slate-400 focus:border-indigo-500 focus:ring-2 focus:ring-indigo-100 disabled:cursor-not-allowed disabled:bg-slate-100;
+  }
+
+  .rotulo {
+    @apply block text-sm font-medium text-slate-700;
+  }
+
+  .btn {
+    @apply inline-flex items-center justify-center gap-2 whitespace-nowrap rounded-lg px-4 py-2 text-sm font-medium transition disabled:cursor-not-allowed disabled:opacity-60;
+  }
+
+  .btn-primario {
+    @apply bg-indigo-600 text-white hover:bg-indigo-700;
+  }
+
+  .btn-secundario {
+    @apply border border-slate-300 bg-white text-slate-700 hover:bg-slate-50;
+  }
+
+  .btn-perigo {
+    @apply bg-rose-600 text-white hover:bg-rose-700;
+  }
+
+  .btn-fantasma {
+    @apply text-slate-600 hover:bg-slate-100 hover:text-slate-900;
+  }
+
+  .btn-sm {
+    @apply px-2.5 py-1.5 text-xs;
+  }
+
+  .cartao {
+    @apply rounded-2xl border border-slate-200 bg-white p-5 shadow-sm sm:p-6;
+  }
+
+  .tabela {
+    @apply w-full text-left text-sm;
+  }
+
+  .tabela th {
+    @apply bg-slate-50 px-4 py-3 text-xs font-semibold uppercase tracking-wide text-slate-500;
+  }
+
+  .tabela td {
+    @apply border-t border-slate-100 px-4 py-3 align-middle;
+  }
+
+  .link {
+    @apply font-medium text-indigo-600 hover:text-indigo-800 hover:underline;
+  }
 }

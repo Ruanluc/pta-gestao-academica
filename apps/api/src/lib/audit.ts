@@ -1,46 +1,33 @@
-import { prisma } from '../main';
+import { prisma } from './prisma';
 
-export const createAuditLog = async (
-  userId: string | undefined,
-  action: string,
-  details: Record<string, unknown> | string | undefined,
-  prismaClient: any = prisma,
-) => {
-  const serializedDetails = typeof details === 'string' ? details : JSON.stringify(details ?? {});
-
-  return prismaClient.auditLog.create({
-    data: {
-      userId: userId ?? undefined,
-      action,
-      details: serializedDetails,
-      entity: 'System',
-      entityId: userId ?? 'anonymous',
-    },
-  });
+type ClienteAuditoria = {
+  auditLog: { create: (args: { data: Record<string, unknown> }) => Promise<unknown> };
 };
 
-export const writeAuditLog = async ({
-  usuarioId,
-  usuarioNome,
-  entidade,
-  entidadeId,
-  acao,
-  detalhes,
-}: {
-  usuarioId?: string;
-  usuarioNome?: string;
+export type RegistroAuditoria = {
+  usuarioId?: string | null;
+  acao: string;
   entidade: string;
   entidadeId: string;
-  acao: string;
-  detalhes?: string;
-}) => {
-  await prisma.auditLog.create({
-    data: {
-      userId: usuarioId ?? undefined,
-      action: acao,
-      details: detalhes,
-      entity: entidade,
-      entityId: entidadeId,
-    },
-  });
+  detalhes?: unknown;
+};
+
+/** Grava um registro de auditoria. Falhas são apenas logadas para não derrubar a operação principal. */
+export const registrarAuditoria = async (
+  { usuarioId, acao, entidade, entidadeId, detalhes }: RegistroAuditoria,
+  cliente: ClienteAuditoria = prisma as unknown as ClienteAuditoria,
+) => {
+  try {
+    await cliente.auditLog.create({
+      data: {
+        usuarioId: usuarioId ?? null,
+        acao,
+        entidade,
+        entidadeId,
+        detalhes: detalhes === undefined ? null : typeof detalhes === 'string' ? detalhes : JSON.stringify(detalhes),
+      },
+    });
+  } catch (erro) {
+    console.error('[auditoria] falha ao registrar ação', acao, erro);
+  }
 };

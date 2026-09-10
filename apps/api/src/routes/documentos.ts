@@ -1,85 +1,102 @@
-import { FastifyPluginAsync } from 'fastify';
-import { prisma } from '../main';
-import { getAuthPayload, hasRequiredRole } from '../lib/auth';
-import { uploadToGoogleDrive } from '../lib/googleDrive';
-import { writeAuditLog } from '../lib/audit';
-import { Readable } from 'stream';
+import type { FastifyPluginAsync } from 'fastify';
+import { StatusDocumento, TipoDocumento } from '@prisma/client';
+import { z } from 'zod';
+import { prisma } from '../lib/prisma';
+import { autenticar, EQUIPE, usuarioLogado } from '../lib/auth';
+import { registrarAuditoria } from '../lib/audit';
+import { HttpError } from '../lib/errors';
+import { removerArquivo } from '../lib/storage';
+import { idParams, idSchema, textoOpcional } from '../lib/validation';
+import { sincronizarAluno } from '../services/academico';
+import { receberDocumento, responderArquivo, SELECAO_DOCUMENTO } from '../services/documentos';
 
 export const documentoRoutes: FastifyPluginAsync = async (app) => {
-  app.get('/', async (request, reply) => {
-    const payload = await getAuthPayload(request, reply);
-    if (!payload) return;
-    if (!hasRequiredRole(payload.role, ['ADMIN', 'SECRETARIA', 'PROFESSOR'])) {
-      return reply.code(403).send({ message: 'Acesso negado' });
-    }
+  // Documentos pessoais: apenas administração e secretaria
+  app.addHook('onRequest', autenticar(EQUIPE));
 
-    return prisma.document.findMany({
-      where: { deletedAt: null },
-      include: { student: true },
-      orderBy: { createdAt: 'desc' },
+  app.get('/', async (request) => {
+    const { status, alunoId, tipo } = z
+      .object({
+        status: z.nativeEnum(StatusDocumento).optional(),
+        alunoId: idSchema.optional(),
+        tipo: z.nativeEnum(TipoDocumento).optional(),
+      })
+      .parse(request.query);
+
+    return prisma.documento.findMany({
+      where: { status, alunoId, tipo },
+      select: SELECAO_DOCUMENTO,
+      orderBy: { criadoEm: 'desc' },
+      take: 300,
     });
   });
 
-  app.post('/', async (request, reply) => {
-    const payload = await getAuthPayload(request, reply);
-    if (!payload) return;
-    if (!hasRequiredRole(payload.role, ['ADMIN', 'SECRETARIA'])) {
-      return reply.code(403).send({ message: 'Acesso negado' });
-    }
-
-    const data = request.body as any;
-    const documento = await prisma.document.create({
-      data: {
-        studentId: data.studentId ?? data.alunoId,
-        uploadedById: data.uploadedById ?? data.usuarioId ?? null,
-        driveUrl: data.driveUrl ?? data.googleDriveLink ?? '',
-        approvalStatus: data.approvalStatus ?? data.status ?? 'PENDENTE',
-      },
-    });
-    await writeAuditLog({
-      usuarioId: payload.id,
-      usuarioNome: payload.role,
-      entidade: 'Documento',
-      entidadeId: documento.id,
-      acao: 'CRIAR',
-      detalhes: JSON.stringify({ studentId: documento.studentId, approvalStatus: documento.approvalStatus }),
-    });
+  /** Upload feito pela equipe: campos "alunoId" e "tipo" antes do campo "arquivo". */
+  app.post('/upload', async (request, reply) => {
+    const documento = await receberDocumento(request, { enviadoPorId: usuarioLogado(request).id });
     return reply.code(201).send(documento);
   });
 
-  app.post('/upload', async (request, reply) => {
-    const payload = await getAuthPayload(request, reply);
-    if (!payload) return;
-    if (!hasRequiredRole(payload.role, ['ADMIN', 'SECRETARIA'])) {
-      return reply.code(403).send({ message: 'Acesso negado' });
-    }
+  app.get('/:id/arquivo', async (request, reply) => {
+    const { id } = idParams.parse(request.params);
 
-    const requestWithFile = request as any;
-    const file = await requestWithFile.file();
-    if (!file) {
-      return reply.code(400).send({ message: 'Arquivo ausente' });
-    }
+    const documento = await prisma.documento.findUnique({ where: { id } });
+    if (!documento) throw new HttpError(404, 'Documento não encontrado');
 
-    const filename = file.filename || 'arquivo-upload';
-    const mimeType = file.mimetype || 'application/octet-stream';
-    const folderId = requestWithFile.body?.folderId ?? null;
+    return responderArquivo(reply, documento);
+  });
 
-    const upload = await uploadToGoogleDrive({
-      stream: file.file as Readable,
-      filename,
-      mimeType,
-      folderId,
+  app.patch('/:id/status', async (request) => {
+    const { id } = idParams.parse(request.params);
+    const { status, motivoRejeicao } = z
+      .object({ status: z.nativeEnum(StatusDocumento), motivoRejeicao: textoOpcional(500) })
+      .superRefine((dados, ctx) => {
+        if (dados.status === 'REJEITADO' && !dados.motivoRejeicao) {
+          ctx.addIssue({ code: z.ZodIssueCode.custom, path: ['motivoRejeicao'], message: 'Informe o motivo da rejeição' });
+        }
+      })
+      .parse(request.body ?? {});
+
+    const logado = usuarioLogado(request);
+    const analisado = status !== 'PENDENTE';
+
+    const documento = await prisma.documento.update({
+      where: { id },
+      data: {
+        status,
+        motivoRejeicao: status === 'REJEITADO' ? motivoRejeicao : null,
+        analisadoPorId: analisado ? logado.id : null,
+        analisadoEm: analisado ? new Date() : null,
+      },
+      select: SELECAO_DOCUMENTO,
     });
 
-    await writeAuditLog({
-      usuarioId: payload.id,
-      usuarioNome: payload.role,
+    await registrarAuditoria({
+      usuarioId: logado.id,
+      acao: `DOCUMENTO_${status}`,
       entidade: 'Documento',
-      entidadeId: 'upload',
-      acao: 'UPLOAD',
-      detalhes: JSON.stringify({ filename, mimeType, fileId: upload.fileId }),
+      entidadeId: id,
+      detalhes: { alunoId: documento.alunoId, tipo: documento.tipo, motivoRejeicao: documento.motivoRejeicao },
     });
 
-    return reply.code(201).send(upload);
+    await sincronizarAluno(documento.alunoId);
+    return documento;
+  });
+
+  app.delete('/:id', async (request, reply) => {
+    const { id } = idParams.parse(request.params);
+    const documento = await prisma.documento.delete({ where: { id } });
+    await removerArquivo(documento.arquivoRef);
+
+    await registrarAuditoria({
+      usuarioId: usuarioLogado(request).id,
+      acao: 'EXCLUIR',
+      entidade: 'Documento',
+      entidadeId: id,
+      detalhes: { alunoId: documento.alunoId, tipo: documento.tipo, nomeArquivo: documento.nomeArquivo },
+    });
+
+    await sincronizarAluno(documento.alunoId);
+    return reply.code(204).send();
   });
 };

@@ -2,70 +2,134 @@
 
 import Link from 'next/link';
 import { useEffect, useState } from 'react';
-import { useRouter } from 'next/navigation';
-import { BookOpen, GraduationCap, Users, FileText } from 'lucide-react';
-import { clearAuthToken, getAuthToken } from './lib/auth';
+import { BookOpen, ClipboardList, FileText, GraduationCap } from 'lucide-react';
+import { api } from './lib/api';
+import { formatarNota } from './lib/formato';
+import { ROTULOS_SEMAFORO, type Dashboard, type StatusSemaforo } from './lib/tipos';
+import { useUsuario } from './components/AppShell';
+import { Aviso, Cabecalho, Carregando, Cartao, cls, useMensagem } from './components/ui';
 
-const cards = [
-  { href: '/turmas', title: 'Turmas', description: 'Gerencie programas e períodos letivos.', icon: BookOpen },
-  { href: '/alunos', title: 'Alunos', description: 'Cadastre alunos e acompanhe documentos.', icon: GraduationCap },
-  { href: '/documentos', title: 'Documentos', description: 'Controle aprovação e rejeição.', icon: FileText },
-  { href: '/notas', title: 'Notas', description: 'Acompanhe médias e frequência.', icon: Users },
-];
+const CORES: Record<StatusSemaforo, string> = {
+  VERDE: 'bg-emerald-500',
+  AMARELO: 'bg-amber-500',
+  VERMELHO: 'bg-rose-500',
+};
 
-export default function HomePage() {
-  const router = useRouter();
-  const [loggedIn, setLoggedIn] = useState(false);
+export default function InicioPage() {
+  const { usuario } = useUsuario();
+  const [dados, setDados] = useState<Dashboard | null>(null);
+  const { mensagem, erro } = useMensagem();
 
   useEffect(() => {
-    const token = getAuthToken();
-    if (!token) {
-      router.replace('/login');
-      return;
-    }
-    setLoggedIn(true);
-  }, [router]);
+    api<Dashboard>('/dashboard').then(setDados).catch(erro);
+  }, [erro]);
 
-  if (!loggedIn) return null;
+  const indicadores = dados
+    ? [
+        { rotulo: 'Turmas ativas', valor: dados.turmasAtivas, detalhe: `${dados.totalTurmas} no total`, href: '/turmas', icone: BookOpen },
+        { rotulo: 'Alunos', valor: dados.totalAlunos, detalhe: 'cadastrados', href: '/alunos', icone: GraduationCap },
+        ...(usuario.role !== 'PROFESSOR'
+          ? [{ rotulo: 'Documentos', valor: dados.documentosPendentes, detalhe: 'aguardando análise', href: '/documentos', icone: FileText }]
+          : []),
+        { rotulo: 'Notas', valor: null, detalhe: 'lançar por aluno ou por módulo', href: '/notas', icone: ClipboardList },
+      ]
+    : [];
 
   return (
-    <main className="min-h-screen bg-slate-50 p-8">
-      <div className="mx-auto max-w-6xl">
-        <div className="mb-8 rounded-2xl bg-white p-8 shadow-sm">
-          <div className="flex items-center justify-between gap-3">
-            <div>
-              <p className="text-sm font-semibold uppercase tracking-[0.2em] text-indigo-600">MVP PTA</p>
-              <h1 className="mt-2 text-3xl font-semibold">Gestão Acadêmica de Pós-Graduação</h1>
-            </div>
-            <button
-              onClick={() => {
-                clearAuthToken();
-                router.replace('/login');
-              }}
-              className="rounded-lg border border-slate-300 px-3 py-2 text-sm text-slate-700"
-            >
-              Sair
-            </button>
-          </div>
-          <h1 className="mt-2 text-3xl font-semibold">Gestão Acadêmica de Pós-Graduação</h1>
-          <p className="mt-3 max-w-2xl text-slate-600">Estrutura completa para turmas, alunos, documentos, matrículas e notas com backend em Node.js e frontend em Next.js.</p>
-        </div>
+    <div>
+      <Cabecalho titulo={`Olá, ${usuario.nome.split(' ')[0]}`} descricao="Resumo da gestão acadêmica de pós-graduação." />
+      <Aviso mensagem={mensagem} />
 
-        <div className="grid gap-6 md:grid-cols-2 xl:grid-cols-4">
-          {cards.map((card) => {
-            const Icon = card.icon;
-            return (
-              <Link key={card.title} href={card.href} className="rounded-2xl border border-slate-200 bg-white p-6 shadow-sm transition hover:-translate-y-1 hover:shadow-md">
-                <div className="mb-4 inline-flex rounded-xl bg-indigo-50 p-3 text-indigo-600">
-                  <Icon className="h-6 w-6" />
+      {!dados ? (
+        !mensagem && <Carregando />
+      ) : (
+        <div className="space-y-6">
+          <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
+            {indicadores.map((item) => {
+              const Icone = item.icone;
+              return (
+                <Link key={item.href} href={item.href} className="cartao transition hover:-translate-y-0.5 hover:shadow-md">
+                  <div className="flex items-center justify-between">
+                    <span className="text-sm font-medium text-slate-600">{item.rotulo}</span>
+                    <span className="rounded-lg bg-indigo-50 p-2 text-indigo-600">
+                      <Icone className="h-4 w-4" />
+                    </span>
+                  </div>
+                  {item.valor !== null ? <p className="mt-3 text-3xl font-semibold text-slate-900">{item.valor}</p> : null}
+                  <p className={cls('text-sm text-slate-500', item.valor === null && 'mt-3')}>{item.detalhe}</p>
+                </Link>
+              );
+            })}
+          </div>
+
+          <div className="grid gap-6 lg:grid-cols-[1.5fr,1fr]">
+            <Cartao titulo="Situação dos alunos" descricao="Clique em uma faixa para ver a lista de alunos.">
+              <div className="space-y-3">
+                {(['VERMELHO', 'AMARELO', 'VERDE'] as StatusSemaforo[]).map((status) => {
+                  const total = dados.semaforo[status];
+                  const percentual = dados.totalAlunos ? (total / dados.totalAlunos) * 100 : 0;
+                  return (
+                    <Link key={status} href={`/alunos?status=${status}`} className="block rounded-lg p-2 hover:bg-slate-50">
+                      <div className="flex items-center justify-between text-sm">
+                        <span className="flex items-center gap-2 font-medium text-slate-700">
+                          <span className={cls('h-2.5 w-2.5 rounded-full', CORES[status])} />
+                          {ROTULOS_SEMAFORO[status]}
+                        </span>
+                        <span className="text-slate-600">{total}</span>
+                      </div>
+                      <div className="mt-2 h-2 rounded-full bg-slate-100">
+                        <div className={cls('h-2 rounded-full', CORES[status])} style={{ width: `${percentual}%` }} />
+                      </div>
+                    </Link>
+                  );
+                })}
+              </div>
+            </Cartao>
+
+            <Cartao titulo="Configuração do sistema">
+              <dl className="space-y-3 text-sm">
+                <div className="flex justify-between gap-4">
+                  <dt className="text-slate-500">Armazenamento de arquivos</dt>
+                  <dd className="font-medium text-slate-900">
+                    {dados.integracoes.armazenamento === 'google-drive' ? 'Google Drive' : 'Servidor local'}
+                  </dd>
                 </div>
-                <h2 className="text-lg font-semibold">{card.title}</h2>
-                <p className="mt-2 text-sm text-slate-600">{card.description}</p>
-              </Link>
-            );
-          })}
+                <div className="flex justify-between gap-4">
+                  <dt className="text-slate-500">Google Drive</dt>
+                  <dd className="font-medium text-slate-900">
+                    {{ desativado: 'Não configurado', manual: 'Exportação manual', automatico: 'Envio automático' }[dados.integracoes.drive]}
+                  </dd>
+                </div>
+                <div className="flex justify-between gap-4">
+                  <dt className="text-slate-500">Envio de e-mails</dt>
+                  <dd className="font-medium text-slate-900">{dados.integracoes.email === 'smtp' ? 'SMTP' : 'Não configurado'}</dd>
+                </div>
+                <div className="flex justify-between gap-4">
+                  <dt className="text-slate-500">Notas da Cademi</dt>
+                  <dd className="text-right font-medium text-slate-900">
+                    {{ desativada: 'Não configurada', pendente: 'Aguardando implementação', ativa: 'Ativa' }[dados.integracoes.cademi]}
+                  </dd>
+                </div>
+                <div className="flex justify-between gap-4">
+                  <dt className="text-slate-500">Geração de históricos</dt>
+                  <dd className="font-medium text-slate-900">{dados.integracoes.fila === 'redis' ? 'Fila (Redis)' : 'Automática (API)'}</dd>
+                </div>
+                <div className="flex justify-between gap-4 border-t border-slate-100 pt-3">
+                  <dt className="text-slate-500">Módulos por turma</dt>
+                  <dd className="font-medium text-slate-900">{dados.regras.modulosPorTurma || 'Sem limite'}</dd>
+                </div>
+                <div className="flex justify-between gap-4">
+                  <dt className="text-slate-500">Aprovação no módulo</dt>
+                  <dd className="text-right font-medium text-slate-900">
+                    nota ≥ {formatarNota(dados.regras.mediaMinima)} (0 a 100)
+                    {dados.regras.frequenciaMinima > 0 ? ` e frequência ≥ ${dados.regras.frequenciaMinima}%` : ''}
+                  </dd>
+                </div>
+              </dl>
+            </Cartao>
+          </div>
         </div>
-      </div>
-    </main>
+      )}
+    </div>
   );
 }

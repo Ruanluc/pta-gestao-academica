@@ -1,10 +1,10 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
 datasource db {
   provider = "postgresql"
   url      = env("DATABASE_URL")
-}
-
-generator client {
-  provider = "prisma-client-js"
 }
 
 enum Role {
@@ -13,107 +13,252 @@ enum Role {
   PROFESSOR
 }
 
-enum DocumentStatus {
-  VERDE_TUDO_CERTO
-  AMARELO_FALTA_AVALIACAO
-  VERMELHO_FALTA_DOCUMENTACAO
+enum CondicaoGraduacao {
+  CURSANDO
+  CONCLUIDO_SEM_DIPLOMA
+  CONCLUIDO_COM_DIPLOMA
 }
 
-enum ApprovalStatus {
+enum TipoDocumento {
+  RG
+  CPF
+  COMPROVANTE_ENDERECO
+  HISTORICO_GRADUACAO
+  DIPLOMA
+  DECLARACAO_CONCLUSAO
+  DECLARACAO_MATRICULA
+  OUTRO
+}
+
+enum StatusDocumento {
   PENDENTE
   APROVADO
   REJEITADO
 }
 
-model User {
-  id        String    @id @default(uuid())
-  email     String    @unique
-  password  String
-  role      Role      @default(SECRETARIA)
-  deletedAt DateTime?
-  createdAt DateTime  @default(now())
-  updatedAt DateTime  @updatedAt
-
-  documents Document[]
-  grades    Grade[]
-  auditLogs AuditLog[]
-  magicLinks MagicLink[]
+// VERMELHO: falta documentação | AMARELO: falta avaliação (documento ou nota) | VERDE: tudo certo
+enum StatusSemaforo {
+  VERDE
+  AMARELO
+  VERMELHO
 }
 
-model Student {
-  id                  String        @id @default(uuid())
-  name                String
-  cpf                 String        @unique
-  email               String
-  phone               String?
-  birthDate           DateTime?
-  googleDriveFolderId String?
-  documentStatus      DocumentStatus @default(VERDE_TUDO_CERTO)
-  deletedAt           DateTime?
-  createdAt           DateTime      @default(now())
-  updatedAt           DateTime      @updatedAt
-
-  documents Document[]
-  grades    Grade[]
+enum OrigemNota {
+  MANUAL
+  CADEMI
 }
 
-model Module {
-  id        String   @id @default(uuid())
-  name      String
-  createdAt DateTime @default(now())
-  updatedAt DateTime @updatedAt
-
-  grades Grade[]
+enum StatusSincronizacao {
+  EM_ANDAMENTO
+  SUCESSO
+  PARCIAL
+  ERRO
 }
 
-model Document {
-  id              String         @id @default(uuid())
-  studentId       String
-  uploadedById    String?
-  driveUrl        String
-  approvalStatus  ApprovalStatus @default(PENDENTE)
-  createdAt       DateTime       @default(now())
-  updatedAt       DateTime       @updatedAt
-  deletedAt       DateTime?
+model Usuario {
+  id           String   @id @default(uuid())
+  nome         String
+  email        String   @unique
+  senhaHash    String
+  role         Role     @default(SECRETARIA)
+  ativo        Boolean  @default(true)
+  criadoEm     DateTime @default(now())
+  atualizadoEm DateTime @updatedAt
 
-  student         Student        @relation(fields: [studentId], references: [id], onDelete: Cascade)
-  uploadedBy      User?          @relation(fields: [uploadedById], references: [id], onDelete: SetNull)
+  documentosEnviados   Documento[] @relation("DocumentoEnviadoPor")
+  documentosAnalisados Documento[] @relation("DocumentoAnalisadoPor")
+  notasLancadas        Nota[]
+  auditLogs            AuditLog[]
+  magicLinks           MagicLink[]
+  sincronizacoesCademi SincronizacaoCademi[]
 }
 
-model Grade {
-  id         String   @id @default(uuid())
-  studentId  String
-  moduleId   String
-  value      Float
-  createdAt  DateTime @default(now())
-  updatedAt  DateTime @updatedAt
-  deletedAt  DateTime?
+model Turma {
+  id           String   @id @default(uuid())
+  // Nome da turma, como sai em "Pós-Graduado no curso de:" (ex.: "Biomecânica... - B7")
+  nome         String
+  // Nome do curso no título do histórico (ex.: "Biomecânica..."). Vazio = usa o nome da turma
+  curso        String?
+  resolucaoMec String?
+  cargaHoraria Int      @default(360)
+  dataInicio   DateTime
+  dataFim      DateTime
+  ativa        Boolean  @default(true)
+  // Link público de inscrição (/inscricao/<codigo>)
+  codigoInscricao   String? @unique
+  inscricoesAbertas Boolean @default(false)
+  criadoEm     DateTime @default(now())
+  atualizadoEm DateTime @updatedAt
 
-  student    Student  @relation(fields: [studentId], references: [id], onDelete: Cascade)
-  module     Module   @relation(fields: [moduleId], references: [id], onDelete: Cascade)
-  createdBy  User?    @relation(fields: [createdById], references: [id], onDelete: SetNull)
-  createdById String?
+  disciplinas          Disciplina[]
+  matriculas           Matricula[]
+  sincronizacoesCademi SincronizacaoCademi[]
+}
+
+// Módulo/disciplina de uma turma. A ordem varia conforme a pós.
+model Disciplina {
+  id           String   @id @default(uuid())
+  turmaId      String
+  ordem        Int
+  nome         String
+  cargaHoraria Int      @default(0)
+  docente      String?
+  titulacao    String?
+  // ID do módulo/avaliação correspondente na Cademi (de onde vêm as notas)
+  cademiId     String?
+  criadoEm     DateTime @default(now())
+  atualizadoEm DateTime @updatedAt
+
+  turma Turma  @relation(fields: [turmaId], references: [id], onDelete: Cascade)
+  notas Nota[]
+
+  @@unique([turmaId, cademiId])
+  @@index([turmaId, ordem])
+}
+
+model Aluno {
+  id                String            @id @default(uuid())
+  nome              String
+  cpf               String            @unique
+  email             String
+  telefone          String?
+  dataNascimento    DateTime?
+  nacionalidade     String?
+  naturalidade      String?
+  filiacao          String?
+  rgNumero          String?
+  rgOrgaoEmissor    String?
+  condicaoGraduacao CondicaoGraduacao @default(CURSANDO)
+  driveFolderId     String?
+  driveExportadoEm  DateTime?
+  // ID do aluno na Cademi: preenchido na primeira importação (casando por CPF/e-mail) ou manualmente
+  cademiId          String?           @unique
+  // Portal do aluno: hash do link de acesso atual (gerar outro invalida o anterior)
+  acessoTokenHash   String?           @unique
+  acessoExpiraEm    DateTime?
+  // Cadastrado pelo próprio aluno no link de inscrição da turma
+  inscricaoOnline   Boolean           @default(false)
+  statusSemaforo    StatusSemaforo    @default(VERMELHO)
+  criadoEm          DateTime          @default(now())
+  atualizadoEm      DateTime          @updatedAt
+
+  matriculas Matricula[]
+  documentos Documento[]
+  notas      Nota[]
+}
+
+model Matricula {
+  id                String    @id @default(uuid())
+  alunoId           String
+  turmaId           String
+  dataInclusao      DateTime  @default(now())
+  // Referência do PDF final do histórico ("local:<caminho>" ou "drive:<fileId>")
+  historicoRef      String?
+  historicoLink     String?
+  // Cópia do histórico exportada para o Google Drive
+  historicoDriveFileId String?
+  // Impressão digital do conteúdo do histórico: evita regerar o PDF quando nada que aparece nele mudou
+  historicoHash     String?
+  historicoGeradoEm DateTime?
+
+  aluno Aluno @relation(fields: [alunoId], references: [id], onDelete: Cascade)
+  turma Turma @relation(fields: [turmaId], references: [id], onDelete: Cascade)
+
+  @@unique([alunoId, turmaId])
+  @@index([turmaId])
+}
+
+model Documento {
+  id             String          @id @default(uuid())
+  alunoId        String
+  tipo           TipoDocumento
+  nomeArquivo    String
+  mimeType       String
+  tamanho        Int
+  // Referência do arquivo ("local:<caminho>" ou "drive:<fileId>")
+  arquivoRef     String
+  // Cópia exportada para o Google Drive (exportação manual da pasta do aluno)
+  driveFileId    String?
+  driveLink      String?
+  status         StatusDocumento @default(PENDENTE)
+  motivoRejeicao String?
+  enviadoPorId   String?
+  analisadoPorId String?
+  analisadoEm    DateTime?
+  criadoEm       DateTime        @default(now())
+  atualizadoEm   DateTime        @updatedAt
+
+  aluno       Aluno    @relation(fields: [alunoId], references: [id], onDelete: Cascade)
+  enviadoPor  Usuario? @relation("DocumentoEnviadoPor", fields: [enviadoPorId], references: [id], onDelete: SetNull)
+  analisadoPor Usuario? @relation("DocumentoAnalisadoPor", fields: [analisadoPorId], references: [id], onDelete: SetNull)
+
+  @@index([alunoId])
+  @@index([status])
+}
+
+// Nota de 0 a 10 e frequência de 0 a 100 (%), uma por aluno/disciplina.
+model Nota {
+  id           String   @id @default(uuid())
+  alunoId      String
+  disciplinaId String
+  media        Float?
+  frequencia   Float?
+  lancadoPorId String?
+  origem       OrigemNota @default(MANUAL)
+  importadoEm  DateTime?
+  criadoEm     DateTime @default(now())
+  atualizadoEm DateTime @updatedAt
+
+  aluno      Aluno      @relation(fields: [alunoId], references: [id], onDelete: Cascade)
+  disciplina Disciplina @relation(fields: [disciplinaId], references: [id], onDelete: Cascade)
+  lancadoPor Usuario?   @relation(fields: [lancadoPorId], references: [id], onDelete: SetNull)
+
+  @@unique([alunoId, disciplinaId])
 }
 
 model AuditLog {
-  id        String   @id @default(uuid())
-  action    String
-  userId    String?
-  entity    String
-  entityId  String
-  timestamp DateTime @default(now())
-  details   String?
+  id         String   @id @default(uuid())
+  acao       String
+  entidade   String
+  entidadeId String
+  usuarioId  String?
+  detalhes   String?
+  criadoEm   DateTime @default(now())
 
-  user      User?    @relation(fields: [userId], references: [id], onDelete: SetNull)
+  usuario Usuario? @relation(fields: [usuarioId], references: [id], onDelete: SetNull)
+
+  @@index([entidade, entidadeId])
+  @@index([criadoEm])
 }
 
 model MagicLink {
   id        String   @id @default(uuid())
-  token     String   @unique
-  userId    String
-  used      Boolean  @default(false)
-  expiresAt DateTime
-  createdAt DateTime @default(now())
+  // Guardamos apenas o hash SHA-256 do token enviado por e-mail
+  tokenHash String   @unique
+  usuarioId String
+  usado     Boolean  @default(false)
+  expiraEm  DateTime
+  criadoEm  DateTime @default(now())
 
-  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  usuario Usuario @relation(fields: [usuarioId], references: [id], onDelete: Cascade)
+}
+
+// Histórico de importações de notas da Cademi
+model SincronizacaoCademi {
+  id              String              @id @default(uuid())
+  turmaId         String
+  usuarioId       String?
+  automatica      Boolean             @default(false)
+  status          StatusSincronizacao @default(EM_ANDAMENTO)
+  notasImportadas Int                 @default(0)
+  notasIgnoradas  Int                 @default(0)
+  // JSON com alunos/módulos da Cademi não encontrados aqui, registros ignorados ou a mensagem de erro
+  detalhes        String?
+  iniciadoEm      DateTime            @default(now())
+  concluidoEm     DateTime?
+
+  turma   Turma    @relation(fields: [turmaId], references: [id], onDelete: Cascade)
+  usuario Usuario? @relation(fields: [usuarioId], references: [id], onDelete: SetNull)
+
+  @@index([turmaId, iniciadoEm])
 }

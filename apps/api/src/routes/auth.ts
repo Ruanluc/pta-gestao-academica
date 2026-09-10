@@ -1,125 +1,141 @@
-import { FastifyPluginAsync } from 'fastify';
+import type { FastifyPluginAsync } from 'fastify';
 import bcrypt from 'bcryptjs';
-import { randomBytes } from 'crypto';
-import { prisma } from '../main';
-import { createToken } from '../lib/auth';
-import { Role } from '@prisma/client';
-import { createAuditLog } from '../lib/audit';
-import { consumeMagicLinkToken, createMagicLinkRecord, validateMagicLinkToken } from '../lib/magicLink';
+import { z } from 'zod';
+import { config } from '../config';
+import { prisma } from '../lib/prisma';
+import { autenticar, createToken, usuarioLogado } from '../lib/auth';
+import { registrarAuditoria } from '../lib/audit';
+import { HttpError } from '../lib/errors';
+import { consumirMagicLink, criarMagicLink, MINUTOS_VALIDADE_MAGIC_LINK } from '../lib/magicLink';
+import { emailHabilitado, enviarEmail } from '../lib/mailer';
+import { criarLimitador } from '../lib/rateLimit';
+import { emailSchema, textoObrigatorio } from '../lib/validation';
+
+export const senhaSchema = z.string().min(8, 'A senha deve ter pelo menos 8 caracteres').max(100);
+
+export const usuarioPublico = (usuario: { id: string; nome: string; email: string; role: string; ativo: boolean }) => ({
+  id: usuario.id,
+  nome: usuario.nome,
+  email: usuario.email,
+  role: usuario.role,
+  ativo: usuario.ativo,
+});
+
+// Faz o login levar o mesmo tempo existindo ou não o usuário (evita descobrir e-mails cadastrados)
+const HASH_FALSO = bcrypt.hashSync('senha-que-nao-existe', 10);
+
+const limitarLogin = criarLimitador({ max: 10, janelaMs: 15 * 60 * 1000 });
+const limitarMagicLink = criarLimitador({ max: 5, janelaMs: 15 * 60 * 1000 });
 
 export const authRoutes: FastifyPluginAsync = async (app) => {
-  app.post('/login', async (request, reply) => {
-    const { email, senha } = request.body as { email: string; senha: string };
+  /** Informa ao frontend se é o primeiro acesso (nenhum usuário cadastrado). */
+  app.get('/status', async () => ({
+    possuiUsuarios: (await prisma.usuario.count()) > 0,
+    magicLinkDisponivel: emailHabilitado() || !config.producao,
+  }));
 
-    if (!email || !senha) {
-      return reply.code(400).send({ message: 'E-mail e senha são obrigatórios' });
+  app.post('/login', async (request) => {
+    const { email, senha } = z
+      .object({ email: emailSchema, senha: z.string().min(1, 'Informe a senha') })
+      .parse(request.body ?? {});
+
+    limitarLogin(`${request.ip}:${email}`);
+
+    const usuario = await prisma.usuario.findUnique({ where: { email } });
+    const senhaCorreta = await bcrypt.compare(senha, usuario?.senhaHash ?? HASH_FALSO);
+
+    if (!usuario || !senhaCorreta || !usuario.ativo) {
+      throw new HttpError(401, 'E-mail ou senha inválidos');
     }
 
-    const user = await prisma.user.findUnique({ where: { email } });
-    if (!user || !(await bcrypt.compare(senha, user.password))) {
-      return reply.code(401).send({ message: 'Credenciais inválidas' });
-    }
+    await registrarAuditoria({ usuarioId: usuario.id, acao: 'LOGIN', entidade: 'Usuario', entidadeId: usuario.id });
 
-    const token = createToken({ id: user.id, role: user.role as Role }, request as any);
-    await createAuditLog(user.id, 'LOGIN', { email });
-
-    return { token, user: { id: user.id, email: user.email, role: user.role } };
+    return { token: createToken({ id: usuario.id, role: usuario.role }), usuario: usuarioPublico(usuario) };
   });
 
-  app.post('/register', async (request, reply) => {
-    const { email, senha, role } = request.body as { email: string; senha: string; role?: Role };
+  app.post('/magic-link', async (request) => {
+    const { email } = z.object({ email: emailSchema }).parse(request.body ?? {});
+    limitarMagicLink(email);
 
-    if (!email || !senha) {
-      return reply.code(400).send({ message: 'E-mail e senha são obrigatórios' });
+    if (!emailHabilitado() && config.producao) {
+      throw new HttpError(503, 'O envio de e-mails não está configurado no servidor');
     }
 
-    const existingUser = await prisma.user.findUnique({ where: { email } });
-    if (existingUser) {
-      return reply.code(409).send({ message: 'Usuário já existe' });
+    const usuario = await prisma.usuario.findUnique({ where: { email } });
+
+    if (usuario?.ativo) {
+      const token = await criarMagicLink(prisma, usuario.id);
+      const link = `${config.webUrl}/magic?token=${encodeURIComponent(token)}`;
+
+      await enviarEmail({
+        para: usuario.email,
+        assunto: 'Seu link de acesso - PTA Gestão Acadêmica',
+        texto: `Olá, ${usuario.nome}!\n\nUse o link abaixo para entrar no sistema:\n${link}\n\nEle expira em ${MINUTOS_VALIDADE_MAGIC_LINK} minutos e só pode ser usado uma vez. Se você não pediu este acesso, ignore este e-mail.`,
+        html: `<p>Olá, ${usuario.nome}!</p><p><a href="${link}">Clique aqui para entrar no sistema</a>.</p><p>O link expira em ${MINUTOS_VALIDADE_MAGIC_LINK} minutos e só pode ser usado uma vez. Se você não pediu este acesso, ignore este e-mail.</p>`,
+      });
+
+      await registrarAuditoria({ usuarioId: usuario.id, acao: 'MAGIC_LINK_SOLICITADO', entidade: 'Usuario', entidadeId: usuario.id });
     }
 
-    const password = await bcrypt.hash(senha, 10);
-
-    const user = await prisma.user.create({
-      data: { email, password, role: role || 'SECRETARIA' },
-    });
-
-    return reply.code(201).send({ id: user.id, email: user.email, role: user.role });
+    // Mesma resposta sempre, para não revelar quais e-mails estão cadastrados
+    return { message: 'Se o e-mail estiver cadastrado, você receberá um link de acesso em instantes.' };
   });
 
-  app.post('/magic-link', async (request, reply) => {
-    const { email } = request.body as { email: string };
+  app.post('/magic-validate', async (request) => {
+    const { token } = z.object({ token: z.string().min(10, 'Token inválido') }).parse(request.body ?? {});
 
-    if (!email) {
-      return reply.code(400).send({ message: 'E-mail é obrigatório' });
-    }
+    const registro = await consumirMagicLink(prisma, token);
+    if (!registro) throw new HttpError(401, 'Link inválido, expirado ou já utilizado');
 
-    const user = await prisma.user.findUnique({ where: { email } });
-    if (!user) {
-      return reply.code(404).send({ message: 'Usuário não encontrado' });
-    }
+    const usuario = await prisma.usuario.findUnique({ where: { id: registro.usuarioId } });
+    if (!usuario || !usuario.ativo) throw new HttpError(401, 'Usuário inativo ou inexistente');
 
-    const token = randomBytes(32).toString('hex');
-    await createMagicLinkRecord(prisma, user.id, token);
+    await registrarAuditoria({ usuarioId: usuario.id, acao: 'LOGIN_MAGIC_LINK', entidade: 'Usuario', entidadeId: usuario.id });
 
-    const magicUrl = `http://localhost:3000/magic?token=${token}`;
-    console.log(`[magic-link] Enviando e-mail para ${email}: ${magicUrl}`);
-
-    return reply.code(200).send({
-      message: 'Magic link gerado com sucesso',
-      magicUrl,
-    });
+    return { token: createToken({ id: usuario.id, role: usuario.role }), usuario: usuarioPublico(usuario) };
   });
 
-  app.post('/magic-validate', async (request, reply) => {
-    const { token } = request.body as { token: string };
-
-    if (!token) {
-      return reply.code(400).send({ message: 'Token é obrigatório' });
-    }
-
-    const magicLink = await validateMagicLinkToken(prisma, token);
-    if (!magicLink) {
-      return reply.code(401).send({ message: 'Token inválido ou expirado' });
-    }
-
-    await consumeMagicLinkToken(prisma, magicLink.id);
-
-    const user = await prisma.user.findUnique({ where: { id: magicLink.userId } });
-    const jwtToken = createToken({ id: magicLink.userId, role: user?.role as Role }, request as any);
-    await createAuditLog(magicLink.userId, 'MAGIC_LINK_VALIDADO', { token });
-
-    return reply.code(200).send({
-      token: jwtToken,
-      user: { id: magicLink.userId },
-    });
+  app.get('/me', { onRequest: autenticar() }, async (request) => {
+    const usuario = await prisma.usuario.findUnique({ where: { id: usuarioLogado(request).id } });
+    if (!usuario) throw new HttpError(404, 'Usuário não encontrado');
+    return usuarioPublico(usuario);
   });
 
-  app.get('/me', { preHandler: [app.authenticate] }, async (request, reply) => {
-    const payload = request.auth;
-    if (!payload) return;
+  app.put('/senha', { onRequest: autenticar() }, async (request) => {
+    const { senhaAtual, novaSenha } = z
+      .object({ senhaAtual: z.string().min(1, 'Informe a senha atual'), novaSenha: senhaSchema })
+      .parse(request.body ?? {});
 
-    const user = await prisma.user.findUnique({ where: { id: payload.id } });
-    if (!user) {
-      return reply.code(404).send({ message: 'Usuário não encontrado' });
+    const usuario = await prisma.usuario.findUnique({ where: { id: usuarioLogado(request).id } });
+    if (!usuario || !(await bcrypt.compare(senhaAtual, usuario.senhaHash))) {
+      throw new HttpError(400, 'Senha atual incorreta');
     }
 
-    return { id: user.id, role: user.role, email: user.email };
+    await prisma.usuario.update({ where: { id: usuario.id }, data: { senhaHash: await bcrypt.hash(novaSenha, 10) } });
+    await registrarAuditoria({ usuarioId: usuario.id, acao: 'SENHA_ALTERADA', entidade: 'Usuario', entidadeId: usuario.id });
+
+    return { message: 'Senha alterada com sucesso' };
   });
 
+  /** Cria o primeiro administrador. Só funciona enquanto não existir nenhum usuário. */
   app.post('/bootstrap-admin', async (request, reply) => {
-    const { email, senha } = request.body as { email: string; senha: string };
-
-    const existing = await prisma.user.findUnique({ where: { email } });
-    if (existing) {
-      return reply.code(409).send({ message: 'Usuário já existe' });
+    if ((await prisma.usuario.count()) > 0) {
+      throw new HttpError(403, 'O sistema já possui usuários. Peça a um administrador para criar sua conta.');
     }
 
-    const password = await bcrypt.hash(senha, 10);
-    const user = await prisma.user.create({
-      data: { email, password, role: 'ADMIN' },
+    const dados = z
+      .object({ nome: textoObrigatorio(2, 150), email: emailSchema, senha: senhaSchema })
+      .parse(request.body ?? {});
+
+    const usuario = await prisma.usuario.create({
+      data: { nome: dados.nome, email: dados.email, senhaHash: await bcrypt.hash(dados.senha, 10), role: 'ADMIN' },
     });
 
-    return reply.code(201).send({ id: user.id, email: user.email, role: user.role });
+    await registrarAuditoria({ usuarioId: usuario.id, acao: 'BOOTSTRAP_ADMIN', entidade: 'Usuario', entidadeId: usuario.id });
+
+    return reply.code(201).send({
+      token: createToken({ id: usuario.id, role: usuario.role }),
+      usuario: usuarioPublico(usuario),
+    });
   });
 };

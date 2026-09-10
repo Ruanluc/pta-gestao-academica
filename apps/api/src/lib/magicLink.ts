@@ -1,31 +1,44 @@
-import { randomBytes } from 'crypto';
+import { createHash, randomBytes } from 'crypto';
 
-export const buildMagicLinkExpiration = (minutes = 15) => new Date(Date.now() + minutes * 60 * 1000);
+export const MINUTOS_VALIDADE_MAGIC_LINK = 15;
 
-export const createMagicLinkRecord = async (prismaClient: any, userId: string, token?: string) => {
-  const safeToken = token ?? randomBytes(32).toString('hex');
-  const expiresAt = buildMagicLinkExpiration();
+type RegistroMagicLink = { id: string; usuarioId: string; usado: boolean; expiraEm: Date };
 
-  return prismaClient.magicLink.create({
+type ClienteMagicLink = {
+  magicLink: {
+    create: (args: { data: { tokenHash: string; usuarioId: string; expiraEm: Date } }) => Promise<unknown>;
+    findUnique: (args: { where: { tokenHash: string } }) => Promise<RegistroMagicLink | null>;
+    updateMany: (args: { where: { id: string; usado: boolean }; data: { usado: boolean } }) => Promise<{ count: number }>;
+  };
+};
+
+export const hashToken = (token: string) => createHash('sha256').update(token).digest('hex');
+
+export const gerarToken = () => randomBytes(32).toString('base64url');
+
+/** Cria o registro no banco (apenas o hash) e devolve o token puro para ser enviado por e-mail. */
+export const criarMagicLink = async (cliente: ClienteMagicLink, usuarioId: string) => {
+  const token = gerarToken();
+  await cliente.magicLink.create({
     data: {
-      token: safeToken,
-      userId,
-      expiresAt,
+      tokenHash: hashToken(token),
+      usuarioId,
+      expiraEm: new Date(Date.now() + MINUTOS_VALIDADE_MAGIC_LINK * 60 * 1000),
     },
   });
+  return token;
 };
 
-export const validateMagicLinkToken = async (prismaClient: any, token: string) => {
-  const magicLink = await prismaClient.magicLink.findUnique({ where: { token } });
-  if (!magicLink) return null;
-  if (magicLink.used) return null;
-  if (magicLink.expiresAt <= new Date()) return null;
-  return magicLink;
-};
+/** Valida e marca o token como usado. Retorna null se inválido, expirado ou já utilizado. */
+export const consumirMagicLink = async (cliente: ClienteMagicLink, token: string) => {
+  const registro = await cliente.magicLink.findUnique({ where: { tokenHash: hashToken(token) } });
+  if (!registro || registro.usado || registro.expiraEm <= new Date()) return null;
 
-export const consumeMagicLinkToken = async (prismaClient: any, id: string) => {
-  return prismaClient.magicLink.update({
-    where: { id },
-    data: { used: true },
+  // A condição `usado: false` impede que duas requisições simultâneas usem o mesmo link
+  const { count } = await cliente.magicLink.updateMany({
+    where: { id: registro.id, usado: false },
+    data: { usado: true },
   });
+
+  return count === 1 ? registro : null;
 };
