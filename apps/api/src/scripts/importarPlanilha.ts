@@ -29,3 +29,6 @@ executar().catch((erro) => {
   console.error('Falha na importação:', erro);
   process.exitCode = 1;
 });
+
+// Módulo próprio (sem isso o TypeScript trata os scripts como globais e acusa nomes repetidos)
+export {};

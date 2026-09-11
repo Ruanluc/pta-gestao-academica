@@ -221,7 +221,11 @@ export const avisarSolicitacaoAnalisada = seguro('solicitação analisada', asyn
 export const avisarCertificadorasNovoLote = seguro('novo lote', async (loteId: string) => {
   const lote = await prisma.loteCertificacao.findUnique({ where: { id: loteId }, include: { _count: { select: { itens: true } } } });
   if (!lote) return;
-  const certificadoras = await prisma.usuario.findMany({ where: { role: 'CERTIFICADORA', ativo: true }, select: { email: true } });
+  // Só os usuários da certificadora do lote
+  const certificadoras = await prisma.usuario.findMany({
+    where: { role: 'CERTIFICADORA', ativo: true, ...(lote.certificadoraId ? { certificadoraId: lote.certificadoraId } : {}) },
+    select: { email: true },
+  });
 
   for (const certificadora of certificadoras) {
     await enviarAviso({

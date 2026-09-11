@@ -17,7 +17,25 @@ export type SituacaoDisciplina = 'APROVADO' | 'REPROVADO' | 'PENDENTE';
 /** Nota de 0 a 100 por módulo; modulosPorTurma = 0 significa sem limite. */
 export type Regras = { mediaMinima: number; frequenciaMinima: number; modulosPorTurma: number };
 
-export type Usuario = { id: string; nome: string; email: string; role: Role; ativo: boolean; criadoEm?: string };
+export type Usuario = {
+  id: string;
+  nome: string;
+  email: string;
+  role: Role;
+  ativo: boolean;
+  criadoEm?: string;
+  /** Perfil CERTIFICADORA: de qual certificadora */
+  certificadoraId?: string | null;
+  certificadora?: { id: string; nome: string } | null;
+};
+
+export type Certificadora = {
+  id: string;
+  nome: string;
+  email: string | null;
+  ativa: boolean;
+  _count?: { lotes: number; usuarios: number };
+};
 
 export type Turma = {
   id: string;
@@ -206,6 +224,7 @@ export type LoteResumo = {
   concluidoEm: string | null;
   criadoEm: string;
   importado: boolean;
+  certificadora: { id: string; nome: string } | null;
   totalAlunos: number;
   certificadosEmitidos: number;
 };
@@ -220,6 +239,8 @@ export type ItemLote = {
   temCertificado: boolean;
   certificadoEnviadoEm: string | null;
   certificadoCanal: 'email' | 'manual' | null;
+  /** Anotação da certificadora ou da equipe (ex.: "FALTA CPF") */
+  observacao: string | null;
   registradoPor: { nome: string } | null;
   matricula: {
     id: string;

@@ -52,6 +52,7 @@ node -e "console.log(require('crypto').randomBytes(48).toString('base64url'))"
 | `npm run db:migrate` | Aplica as migrações pendentes (`prisma migrate deploy`) |
 | `npm run db:seed` | Cria o administrador definido em `ADMIN_EMAIL`/`ADMIN_SENHA` |
 | `npm run importar:planilha -w apps/api -- "<planilha.xlsx>" [--aplicar]` | Importa a planilha antiga (sem `--aplicar` só simula) |
+| `npm run importar:remessas -w apps/api -- "<... - INOVE.xlsx>" "<... - USINA.xlsx>" [--aplicar]` | Importa as remessas das certificadoras (sem `--aplicar` só simula) |
 | `npm --workspace apps/api run db:migrate:dev -- --name <nome>` | Cria uma nova migração após alterar o `schema.prisma` |
 
 ## Perfis de acesso
@@ -61,7 +62,7 @@ node -e "console.log(require('crypto').randomBytes(48).toString('base64url'))"
 | **Administrador** | Tudo: configurar turmas e módulos, usuários, auditoria, exclusões definitivas e situação das matrículas |
 | **Equipe CS** | Alunos, matrículas, documentos, notas e certificação (não cria/edita turmas e módulos nem usuários) |
 | **Professor** | Consultar turmas e alunos (sem documentos pessoais) e lançar notas |
-| **Certificadora** | Só os lotes já enviados: baixa os históricos e registra/anexa os certificados |
+| **Certificadora** | Só os lotes já enviados **à certificadora dela** (INOVE, USINA...): baixa os históricos, registra/anexa os certificados e anota pendências |
 | **Financeiro** | Só a tela **Financeiro**: situação de cada matrícula (Em dia, Atrasado, Cancelado...) |
 
 ## Regras acadêmicas
@@ -111,7 +112,9 @@ node -e "console.log(require('crypto').randomBytes(48).toString('base64url'))"
 
 ## Certificação (lotes mensais)
 
-- Em **Certificação**, a equipe cria o lote do mês com os alunos **aptos**: histórico final gerado (todos os módulos
+- **Certificadoras** (INOVE, USINA...) são cadastradas pelo administrador em **Usuários**. Cada lote vai para uma
+  delas, e cada usuário do perfil Certificadora fica ligado à sua: só vê, recebe avisos e acessa a pasta dos lotes dela.
+- Em **Certificação**, a equipe cria o lote do mês, escolhendo a certificadora, com os alunos **aptos**: histórico final gerado (todos os módulos
   aprovados e dados pessoais completos), documentação aprovada e matrícula não cancelada. Quem concluiu os módulos
   mas ainda tem pendência aparece separado, com o motivo.
 - **Enviar para a certificadora** congela o lote, começa a contar o prazo (`PRAZO_CERTIFICADORA_DIAS`, 30 dias),
@@ -162,6 +165,27 @@ npm run importar:planilha -w apps/api -- "C:\caminho\CONTROLE DE ALUNOS - PLANIL
   Ficam marcados como "planilha antiga" e não geram alertas de prazo.
 - Nenhum e-mail é enviado aos alunos durante a importação. Depois, o semáforo é recalculado e o histórico final é
   gerado para quem já concluiu todos os módulos. Pode rodar de novo: o que já existe não é duplicado nem sobrescrito.
+
+## Importação das remessas das certificadoras
+
+As planilhas "Novas demandas de confecção dos certificados - INOVE.xlsx" / "- USINA.xlsx" (uma aba por curso, um
+bloco por turma com "Remessa solicitada dia", os nomes e o andamento ao lado) complementam a importação acima:
+
+```bash
+npm run importar:remessas -w apps/api -- "C:\...\... - INOVE.xlsx" "C:\...\... - USINA.xlsx"            # simulação
+npm run importar:remessas -w apps/api -- "C:\...\... - INOVE.xlsx" "C:\...\... - USINA.xlsx" --aplicar  # grava
+```
+
+- A certificadora vem do fim do nome do arquivo (" - INOVE") e é cadastrada se ainda não existir.
+- Cada remessa (certificadora + data) vira um lote. Os alunos (casados pelo nome com a turma, ex.: Biomecânica
+  Turma 03 → B3) saem dos lotes mensais da planilha de controle e vão para o lote da remessa; lote mensal que fica
+  vazio é removido. O que já estava registrado (emissão, entrega) é mantido.
+- "ENTREGUE"/"OK" = certificado **emitido e entregue** ao aluno na data da remessa; "RECEBEMOS" = emitido. As demais
+  anotações ("FALTA CPF", "ENVIADO PARA IES", "CERTIFICADO DE EXTENSÃO"...) ficam como **anotação** do aluno no lote.
+- Turmas que só aparecem nas remessas (ex.: B2, SmartFit) são criadas **vazias**: as planilhas não têm CPF, então os
+  alunos delas vão para o relatório (`alunos-de-turmas-novas.csv`) para serem cadastrados.
+- Remessas ainda dentro do prazo de 30 dias viram lotes normais (com alertas); as antigas não geram alertas.
+  Pode rodar de novo sem duplicar.
 
 ## Integrações opcionais
 

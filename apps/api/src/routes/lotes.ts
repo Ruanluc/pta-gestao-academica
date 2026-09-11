@@ -1,5 +1,7 @@
 import type { FastifyPluginAsync, FastifyRequest } from 'fastify';
+import type { Prisma } from '@prisma/client';
 import { z } from 'zod';
+import { registrarAuditoria } from '../lib/audit';
 import { config } from '../config';
 import { prisma } from '../lib/prisma';
 import { autenticar, COM_LOTES, EQUIPE, exigirPerfil, usuarioLogado } from '../lib/auth';
@@ -32,16 +34,27 @@ export const loteRoutes: FastifyPluginAsync = async (app) => {
   app.addHook('onRequest', autenticar(COM_LOTES));
   const soEquipe = { preHandler: exigirPerfil(EQUIPE) };
 
-  // A certificadora só enxerga lotes já enviados
-  const filtroVisivel = (request: FastifyRequest) => (ehCertificadora(request) ? { status: { not: 'ABERTO' as const } } : {});
+  // A certificadora só enxerga os lotes já enviados para ela
+  const filtroVisivel = async (request: FastifyRequest): Promise<Prisma.LoteCertificacaoWhereInput> => {
+    if (!ehCertificadora(request)) return {};
+    const usuario = await prisma.usuario.findUnique({ where: { id: usuarioLogado(request).id }, select: { certificadoraId: true } });
+    return usuario?.certificadoraId ? { status: { not: 'ABERTO' }, certificadoraId: usuario.certificadoraId } : { id: { in: [] } };
+  };
+
+  /** Nas ações da certificadora, o lote precisa ser dela. */
+  const garantirLoteVisivel = async (request: FastifyRequest, loteId: string) => {
+    if (!ehCertificadora(request)) return;
+    const lote = await prisma.loteCertificacao.findFirst({ where: { id: loteId, ...(await filtroVisivel(request)) }, select: { id: true } });
+    if (!lote) throw new HttpError(404, 'Lote não encontrado');
+  };
 
   app.get('/aptos', soEquipe, async () => matriculasAptas());
 
   app.get('/', async (request) => {
     const lotes = await prisma.loteCertificacao.findMany({
-      where: filtroVisivel(request),
-      orderBy: { criadoEm: 'desc' },
-      include: { itens: { select: { certificadoEmitidoEm: true } } },
+      where: await filtroVisivel(request),
+      orderBy: [{ enviadoEm: { sort: 'desc', nulls: 'first' } }, { criadoEm: 'desc' }],
+      include: { itens: { select: { certificadoEmitidoEm: true } }, certificadora: { select: { id: true, nome: true } } },
     });
     return lotes.map(({ itens, ...lote }) => ({
       ...lote,
@@ -55,9 +68,10 @@ export const loteRoutes: FastifyPluginAsync = async (app) => {
     const certificadora = ehCertificadora(request);
 
     const lote = await prisma.loteCertificacao.findFirst({
-      where: { id, ...filtroVisivel(request) },
+      where: { id, ...(await filtroVisivel(request)) },
       include: {
         criadoPor: { select: { nome: true } },
+        certificadora: { select: { id: true, nome: true } },
         itens: {
           orderBy: { matricula: { aluno: { nome: 'asc' } } },
           include: {
@@ -89,7 +103,11 @@ export const loteRoutes: FastifyPluginAsync = async (app) => {
 
   app.post('/', soEquipe, async (request, reply) => {
     const dados = z
-      .object({ referencia: referenciaSchema.optional(), matriculaIds: z.array(idSchema).min(1, 'Selecione ao menos um aluno').max(500) })
+      .object({
+        referencia: referenciaSchema.optional(),
+        certificadoraId: idSchema,
+        matriculaIds: z.array(idSchema).min(1, 'Selecione ao menos um aluno').max(500),
+      })
       .parse(request.body ?? {});
     return reply.code(201).send(await criarLote(dados, usuarioLogado(request).id));
   });
@@ -126,6 +144,7 @@ export const loteRoutes: FastifyPluginAsync = async (app) => {
   /** Certificadora (ou equipe) registra o certificado de um aluno; sem data = desfaz o registro. */
   app.patch('/:id/itens/:itemId/certificado', async (request) => {
     const { id, itemId } = itemParams.parse(request.params);
+    await garantirLoteVisivel(request, id);
     const { numero, emitidoEm } = z
       .object({ numero: textoOpcional(60), emitidoEm: dataOpcional })
       .parse(request.body ?? {});
@@ -136,6 +155,7 @@ export const loteRoutes: FastifyPluginAsync = async (app) => {
   /** Marca como emitidos todos os certificados ainda pendentes do lote. */
   app.post('/:id/certificados', async (request) => {
     const { id } = idParams.parse(request.params);
+    await garantirLoteVisivel(request, id);
     const { emitidoEm } = z.object({ emitidoEm: dataObrigatoria }).parse(request.body ?? {});
     const pendentes = await prisma.itemLote.findMany({ where: { loteId: id, certificadoEmitidoEm: null }, select: { id: true } });
     for (const item of pendentes) {
@@ -147,13 +167,25 @@ export const loteRoutes: FastifyPluginAsync = async (app) => {
   /** PDF do certificado digital (certificadora ou equipe): vai para a pasta do aluno e segue por e-mail para ele. */
   app.post('/:id/itens/:itemId/certificado-arquivo', async (request) => {
     const { id, itemId } = itemParams.parse(request.params);
+    await garantirLoteVisivel(request, id);
     return anexarCertificado(id, itemId, request, usuarioLogado(request).id);
+  });
+
+  /** Anotação sobre o aluno no lote (certificadora ou equipe), ex.: "FALTA CPF", "Enviado para a IES". */
+  app.patch('/:id/itens/:itemId/observacao', async (request) => {
+    const { id, itemId } = itemParams.parse(request.params);
+    await garantirLoteVisivel(request, id);
+    const { observacao } = z.object({ observacao: textoOpcional(300) }).parse(request.body ?? {});
+    const { count } = await prisma.itemLote.updateMany({ where: { id: itemId, loteId: id }, data: { observacao: observacao ?? null } });
+    if (!count) throw new HttpError(404, 'Aluno não encontrado neste lote');
+    await registrarAuditoria({ usuarioId: usuarioLogado(request).id, acao: 'ANOTACAO_LOTE', entidade: 'LoteCertificacao', entidadeId: id, detalhes: { itemId, observacao } });
+    return { ok: true };
   });
 
   app.get('/:id/itens/:itemId/certificado-arquivo', async (request, reply) => {
     const { id, itemId } = itemParams.parse(request.params);
     const item = await prisma.itemLote.findFirst({
-      where: { id: itemId, loteId: id, lote: filtroVisivel(request) },
+      where: { id: itemId, loteId: id, lote: await filtroVisivel(request) },
       select: { certificadoRef: true, certificadoNomeArquivo: true },
     });
     if (!item?.certificadoRef) throw new HttpError(404, 'Certificado não encontrado');
@@ -180,7 +212,7 @@ export const loteRoutes: FastifyPluginAsync = async (app) => {
   app.get('/:id/itens/:itemId/historico', async (request, reply) => {
     const { id, itemId } = itemParams.parse(request.params);
     const item = await prisma.itemLote.findFirst({
-      where: { id: itemId, loteId: id, lote: filtroVisivel(request) },
+      where: { id: itemId, loteId: id, lote: await filtroVisivel(request) },
       include: { matricula: { select: { historicoRef: true, aluno: { select: { nome: true } }, turma: { select: { nome: true } } } } },
     });
     if (!item) throw new HttpError(404, 'Aluno não encontrado neste lote');

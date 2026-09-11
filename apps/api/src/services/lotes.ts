@@ -85,19 +85,31 @@ const exigirAberto = (lote: { status: string }) => {
   if (lote.status !== 'ABERTO') throw new HttpError(409, 'Este lote já foi enviado e não pode mais ser alterado');
 };
 
-export const criarLote = async ({ referencia, matriculaIds }: { referencia?: string; matriculaIds: string[] }, usuarioId: string) => {
+export const criarLote = async (
+  { referencia, matriculaIds, certificadoraId }: { referencia?: string; matriculaIds: string[]; certificadoraId: string },
+  usuarioId: string,
+) => {
   const ids = [...new Set(matriculaIds)];
+  const certificadora = await prisma.certificadora.findUnique({ where: { id: certificadoraId }, select: { ativa: true } });
+  if (!certificadora?.ativa) throw new HttpError(400, 'Escolha uma certificadora ativa para o lote');
   await garantirAptas(ids);
 
   const lote = await prisma.loteCertificacao.create({
     data: {
       referencia: referencia ?? referenciaDoMes(),
+      certificadoraId,
       criadoPorId: usuarioId,
       itens: { create: ids.map((matriculaId) => ({ matriculaId })) },
     },
   });
 
-  await registrarAuditoria({ usuarioId, acao: 'CRIAR', entidade: 'LoteCertificacao', entidadeId: lote.id, detalhes: { referencia: lote.referencia, alunos: ids.length } });
+  await registrarAuditoria({
+    usuarioId,
+    acao: 'CRIAR',
+    entidade: 'LoteCertificacao',
+    entidadeId: lote.id,
+    detalhes: { referencia: lote.referencia, certificadoraId, alunos: ids.length },
+  });
   return lote;
 };
 
@@ -230,9 +242,12 @@ export const gerarPastaDriveLote = async (loteId: string, usuarioId: string | nu
     falhas.push({ item: 'Planilha-índice', erro: mensagem(erro) });
   }
 
-  // Compartilha a pasta do lote com cada usuário certificadora ativo
+  // Compartilha a pasta do lote com os usuários ativos da certificadora do lote
   const compartilhadoCom: string[] = [];
-  const certificadoras = await prisma.usuario.findMany({ where: { role: 'CERTIFICADORA', ativo: true }, select: { email: true } });
+  const certificadoras = await prisma.usuario.findMany({
+    where: { role: 'CERTIFICADORA', ativo: true, ...(lote.certificadoraId ? { certificadoraId: lote.certificadoraId } : {}) },
+    select: { email: true },
+  });
   for (const certificadora of certificadoras) {
     try {
       await dependencias.compartilhar(pastaLote, certificadora.email);

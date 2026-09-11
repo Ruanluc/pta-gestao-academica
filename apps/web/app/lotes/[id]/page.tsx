@@ -273,6 +273,15 @@ export default function LoteDetalhePage({ params }: { params: { id: string } }) 
     );
   };
 
+  const anotar = (item: ItemLote) => {
+    const texto = window.prompt(`Anotação sobre ${item.matricula.aluno.nome} (ex.: FALTA CPF). Deixe vazio para apagar:`, item.observacao ?? '');
+    if (texto === null) return;
+    void executar(
+      () => api(`/lotes/${lote.id}/itens/${item.id}/observacao`, { method: 'PATCH', json: { observacao: texto.trim() } }),
+      () => sucesso(texto.trim() ? 'Anotação salva.' : 'Anotação apagada.'),
+    );
+  };
+
   const baixarHistorico = async (item: ItemLote) => {
     try {
       await abrirArquivo(`/lotes/${lote.id}/itens/${item.id}/historico`);
@@ -289,6 +298,7 @@ export default function LoteDetalhePage({ params }: { params: { id: string } }) 
         descricao={
           <span className="flex flex-wrap items-center gap-3">
             <StatusLoteBadge status={lote.status} />
+            {lote.certificadora ? <span className="font-medium text-slate-700">{lote.certificadora.nome}</span> : null}
             {lote.importado ? <span className="rounded-full bg-slate-100 px-2 py-0.5 text-xs text-slate-600">Importado da planilha antiga</span> : null}
             <span>{lote.itens.length} aluno(s)</span>
             {lote.enviadoEm ? <span>enviado em {formatarDataHora(lote.enviadoEm)}</span> : null}
@@ -397,6 +407,12 @@ export default function LoteDetalhePage({ params }: { params: { id: string } }) 
                         <span className="font-medium text-slate-900">{item.matricula.aluno.nome}</span>
                       )}
                       <p className="text-xs text-slate-500">CPF {mascararCpf(item.matricula.aluno.cpf)}</p>
+                      {item.observacao ? <p className="mt-1 text-xs font-medium text-amber-700">{item.observacao}</p> : null}
+                      {!aberto ? (
+                        <button type="button" disabled={ocupado} onClick={() => anotar(item)} className="text-xs text-slate-500 hover:text-indigo-700 hover:underline">
+                          {item.observacao ? 'editar anotação' : 'anotar'}
+                        </button>
+                      ) : null}
                     </td>
                     <td className="text-slate-600">{item.matricula.turma.nome}</td>
                     <td>

@@ -90,6 +90,8 @@ model Usuario {
   email        String   @unique
   senhaHash    String
   role         Role     @default(SECRETARIA)
+  // Usuários do perfil CERTIFICADORA: de qual certificadora (só veem os lotes dela)
+  certificadoraId String?
   ativo        Boolean  @default(true)
   criadoEm     DateTime @default(now())
   atualizadoEm DateTime @updatedAt
@@ -103,6 +105,20 @@ model Usuario {
   lotesCriados         LoteCertificacao[]     @relation("LoteCriadoPor")
   certificadosRegistrados ItemLote[]          @relation("CertificadoRegistradoPor")
   solicitacoesAnalisadas SolicitacaoAlteracao[]
+  certificadora        Certificadora?         @relation(fields: [certificadoraId], references: [id], onDelete: SetNull)
+}
+
+// Instituição que emite os certificados (ex.: INOVE, USINA). Cada lote vai para uma delas.
+model Certificadora {
+  id           String   @id @default(uuid())
+  nome         String   @unique
+  email        String?
+  ativa        Boolean  @default(true)
+  criadoEm     DateTime @default(now())
+  atualizadoEm DateTime @updatedAt
+
+  usuarios Usuario[]
+  lotes    LoteCertificacao[]
 }
 
 model Turma {
@@ -339,14 +355,17 @@ model LoteCertificacao {
   driveIndiceId String?
   // Reconstruído a partir da planilha antiga: não gera alertas de prazo
   importado     Boolean    @default(false)
+  certificadoraId String?
   criadoPorId   String?
   criadoEm      DateTime   @default(now())
   atualizadoEm  DateTime   @updatedAt
 
-  criadoPor Usuario?   @relation("LoteCriadoPor", fields: [criadoPorId], references: [id], onDelete: SetNull)
-  itens     ItemLote[]
+  criadoPor     Usuario?       @relation("LoteCriadoPor", fields: [criadoPorId], references: [id], onDelete: SetNull)
+  certificadora Certificadora? @relation(fields: [certificadoraId], references: [id], onDelete: SetNull)
+  itens         ItemLote[]
 
   @@index([status])
+  @@index([certificadoraId])
 }
 
 // Um aluno (matrícula) dentro de um lote; cada matrícula entra em um único lote
@@ -363,6 +382,8 @@ model ItemLote {
   certificadoEnviadoEm DateTime?
   // "email" (enviado pelo sistema) ou "manual" (registrado pela equipe)
   certificadoCanal     String?
+  // Anotação da certificadora ou da equipe (ex.: "FALTA CPF", "Enviado para a IES")
+  observacao           String?
   registradoPorId      String?
   criadoEm             DateTime  @default(now())
   atualizadoEm         DateTime  @updatedAt

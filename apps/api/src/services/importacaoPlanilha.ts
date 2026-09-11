@@ -152,7 +152,7 @@ type Plano = {
 };
 
 /** Texto das células de uma linha, indexado pelo número da coluna (célula mesclada: só na primeira). */
-const textosDaLinha = (aba: ExcelJS.Worksheet, numero: number) => {
+export const textosDaLinha = (aba: ExcelJS.Worksheet, numero: number) => {
   const linha = aba.getRow(numero);
   const textos: string[] = [''];
   for (let coluna = 1; coluna <= aba.columnCount; coluna += 1) {
@@ -641,7 +641,7 @@ const imprimirResumo = (resumo: ReturnType<typeof resumir>) => {
 };
 
 const campoCsv = (valor: unknown) => `"${String(valor ?? '').replace(/"/g, '""')}"`;
-const csv = (cabecalho: string[], linhas: unknown[][]) => `\uFEFF${[cabecalho, ...linhas].map((linha) => linha.map(campoCsv).join(';')).join('\r\n')}`;
+export const csv = (cabecalho: string[], linhas: unknown[][]) => `\uFEFF${[cabecalho, ...linhas].map((linha) => linha.map(campoCsv).join(';')).join('\r\n')}`;
 
 /** Relatório detalhado (com nomes e CPFs) na pasta de armazenamento da API, fora do git. */
 const salvarRelatorio = async (pasta: string, plano: Plano, resumo: ReturnType<typeof resumir>) => {
@@ -810,7 +810,15 @@ const aplicarPlano = async (plano: Plano) => {
 
   // Lotes antigos (não geram alertas de prazo)
   for (const lote of plano.lotes) {
-    let registro = await prisma.loteCertificacao.findFirst({ where: { referencia: lote.referencia, importado: true }, select: { id: true } });
+    // Só alunos que ainda não estão em nenhum lote (as remessas das certificadoras podem ter reorganizado os lotes)
+    const novos: Array<{ matriculaId: string; digital: CertificadoDigitalLido | null }> = [];
+    for (const item of lote.itens) {
+      const matriculaId = matriculas.get(item.chave);
+      if (matriculaId && !(await prisma.itemLote.findUnique({ where: { matriculaId }, select: { id: true } }))) novos.push({ matriculaId, digital: item.digital });
+    }
+
+    let registro = await prisma.loteCertificacao.findFirst({ where: { referencia: lote.referencia, importado: true, certificadoraId: null }, select: { id: true } });
+    if (!registro && !novos.length) continue;
     if (!registro) {
       registro = await prisma.loteCertificacao.create({
         data: {
@@ -825,11 +833,9 @@ const aplicarPlano = async (plano: Plano) => {
       resultado.lotesCriados += 1;
     }
 
-    for (const item of lote.itens) {
-      const matriculaId = matriculas.get(item.chave);
-      if (!matriculaId || (await prisma.itemLote.findUnique({ where: { matriculaId }, select: { id: true } }))) continue;
-      const emitido = item.digital && item.digital.situacao !== 'desconhecido' ? item.digital.data : null;
-      const entregue = item.digital?.situacao === 'entregue' ? item.digital.data : null;
+    for (const { matriculaId, digital } of novos) {
+      const emitido = digital && digital.situacao !== 'desconhecido' ? digital.data : null;
+      const entregue = digital?.situacao === 'entregue' ? digital.data : null;
       await prisma.itemLote.create({
         data: { loteId: registro.id, matriculaId, certificadoEmitidoEm: emitido, certificadoEnviadoEm: entregue, certificadoCanal: entregue ? 'manual' : null },
       });

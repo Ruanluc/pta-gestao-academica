@@ -6,17 +6,33 @@ import { prisma } from '../lib/prisma';
 import { autenticar, SO_ADMIN, usuarioLogado } from '../lib/auth';
 import { registrarAuditoria } from '../lib/audit';
 import { HttpError } from '../lib/errors';
-import { emailSchema, idParams, textoObrigatorio } from '../lib/validation';
+import { emailSchema, idParams, idSchema, textoObrigatorio } from '../lib/validation';
 import { senhaSchema } from './auth';
 
-const SELECAO_USUARIO = { id: true, nome: true, email: true, role: true, ativo: true, criadoEm: true } as const;
+const SELECAO_USUARIO = {
+  id: true,
+  nome: true,
+  email: true,
+  role: true,
+  ativo: true,
+  criadoEm: true,
+  certificadoraId: true,
+  certificadora: { select: { id: true, nome: true } },
+} as const;
 
-const criarSchema = z.object({
-  nome: textoObrigatorio(2, 150),
-  email: emailSchema,
-  senha: senhaSchema,
-  role: z.nativeEnum(Role).default('SECRETARIA'),
-});
+const MENSAGEM_CERTIFICADORA = 'Escolha a certificadora deste usuário';
+const certificadoraIdSchema = z.preprocess((valor) => (valor === '' ? null : valor), idSchema.nullable().optional());
+
+const criarSchema = z
+  .object({
+    nome: textoObrigatorio(2, 150),
+    email: emailSchema,
+    senha: senhaSchema,
+    role: z.nativeEnum(Role).default('SECRETARIA'),
+    // Perfil CERTIFICADORA: de qual certificadora (só verá os lotes dela)
+    certificadoraId: certificadoraIdSchema,
+  })
+  .refine((dados) => dados.role !== 'CERTIFICADORA' || dados.certificadoraId, { message: MENSAGEM_CERTIFICADORA, path: ['certificadoraId'] });
 
 const atualizarSchema = z.object({
   nome: textoObrigatorio(2, 150).optional(),
@@ -24,6 +40,7 @@ const atualizarSchema = z.object({
   senha: z.preprocess((valor) => (valor === '' ? undefined : valor), senhaSchema.optional()),
   role: z.nativeEnum(Role).optional(),
   ativo: z.boolean().optional(),
+  certificadoraId: certificadoraIdSchema,
 });
 
 export const usuarioRoutes: FastifyPluginAsync = async (app) => {
@@ -35,7 +52,13 @@ export const usuarioRoutes: FastifyPluginAsync = async (app) => {
     const dados = criarSchema.parse(request.body ?? {});
 
     const usuario = await prisma.usuario.create({
-      data: { nome: dados.nome, email: dados.email, role: dados.role, senhaHash: await bcrypt.hash(dados.senha, 10) },
+      data: {
+        nome: dados.nome,
+        email: dados.email,
+        role: dados.role,
+        certificadoraId: dados.role === 'CERTIFICADORA' ? dados.certificadoraId : null,
+        senhaHash: await bcrypt.hash(dados.senha, 10),
+      },
       select: SELECAO_USUARIO,
     });
 
@@ -59,12 +82,19 @@ export const usuarioRoutes: FastifyPluginAsync = async (app) => {
       throw new HttpError(400, 'Você não pode desativar a sua própria conta nem remover o seu perfil de administrador');
     }
 
+    const atual = await prisma.usuario.findUnique({ where: { id }, select: { role: true, certificadoraId: true } });
+    if (!atual) throw new HttpError(404, 'Usuário não encontrado');
+    const roleFinal = dados.role ?? atual.role;
+    const certificadoraFinal = roleFinal === 'CERTIFICADORA' ? (dados.certificadoraId !== undefined ? dados.certificadoraId : atual.certificadoraId) : null;
+    if (roleFinal === 'CERTIFICADORA' && !certificadoraFinal) throw new HttpError(400, MENSAGEM_CERTIFICADORA);
+
     const usuario = await prisma.usuario.update({
       where: { id },
       data: {
         nome: dados.nome,
         email: dados.email,
         role: dados.role,
+        certificadoraId: certificadoraFinal,
         ativo: dados.ativo,
         ...(dados.senha ? { senhaHash: await bcrypt.hash(dados.senha, 10) } : {}),
       },

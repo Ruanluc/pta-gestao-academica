@@ -6,7 +6,7 @@ import { useEffect, useState } from 'react';
 import { Plus } from 'lucide-react';
 import { api } from '../lib/api';
 import { formatarDataHora } from '../lib/formato';
-import type { LoteResumo } from '../lib/tipos';
+import type { Certificadora, LoteResumo } from '../lib/tipos';
 import { useUsuario } from '../components/AppShell';
 import { PrazoLote, SeletorAptos, StatusLoteBadge } from '../components/Lotes';
 import { Aviso, Cabecalho, Carregando, Cartao, useMensagem, Vazio } from '../components/ui';
@@ -17,16 +17,20 @@ export default function LotesPage() {
   const equipe = usuario.role !== 'CERTIFICADORA';
 
   const [lotes, setLotes] = useState<LoteResumo[] | null>(null);
+  const [certificadoras, setCertificadoras] = useState<Certificadora[]>([]);
   const [criando, setCriando] = useState(false);
   const [referencia, setReferencia] = useState(() => new Date().toISOString().slice(0, 7));
+  const [certificadoraId, setCertificadoraId] = useState('');
   const { mensagem, erro } = useMensagem();
 
   useEffect(() => {
     api<LoteResumo[]>('/lotes').then(setLotes).catch(erro);
-  }, [erro]);
+    if (equipe) api<Certificadora[]>('/certificadoras').then((lista) => setCertificadoras(lista.filter((item) => item.ativa))).catch(erro);
+  }, [erro, equipe]);
 
   const criar = async (matriculaIds: string[]) => {
-    const lote = await api<{ id: string }>('/lotes', { method: 'POST', json: { referencia, matriculaIds } });
+    if (!certificadoraId) throw new Error('Escolha a certificadora do lote.');
+    const lote = await api<{ id: string }>('/lotes', { method: 'POST', json: { referencia, certificadoraId, matriculaIds } });
     router.push(`/lotes/${lote.id}`);
   };
 
@@ -36,7 +40,7 @@ export default function LotesPage() {
         titulo="Certificação"
         descricao={
           equipe
-            ? 'Lotes enviados à certificadora no fim de cada mês. O prazo de entrega começa a contar no envio do lote.'
+            ? 'Lotes enviados às certificadoras no fim de cada mês. O prazo de entrega começa a contar no envio do lote.'
             : 'Lotes enviados pela instituição. Abra um lote para acessar os arquivos e registrar os certificados emitidos.'
         }
         acoes={
@@ -49,16 +53,41 @@ export default function LotesPage() {
       />
 
       {criando ? (
-        <Cartao titulo="Novo lote" descricao="Alunos aptos: histórico final gerado e documentação aprovada." className="mb-6">
+        <Cartao titulo="Novo lote" descricao="Alunos aptos: histórico final gerado, documentação aprovada e matrícula não cancelada." className="mb-6">
           <SeletorAptos
             textoBotao="Criar lote"
             onConfirmar={criar}
             onCancelar={() => setCriando(false)}
             extra={
-              <label className="rotulo mb-4 block w-52">
-                Mês de referência
-                <input type="month" value={referencia} onChange={(evento) => setReferencia(evento.target.value)} required className="input" />
-              </label>
+              <div className="mb-4 flex flex-wrap gap-4">
+                <label className="rotulo block w-52">
+                  Mês de referência
+                  <input type="month" value={referencia} onChange={(evento) => setReferencia(evento.target.value)} required className="input" />
+                </label>
+                <label className="rotulo block w-60">
+                  Certificadora
+                  <select value={certificadoraId} onChange={(evento) => setCertificadoraId(evento.target.value)} required className="input">
+                    <option value="">Escolha...</option>
+                    {certificadoras.map((certificadora) => (
+                      <option key={certificadora.id} value={certificadora.id}>
+                        {certificadora.nome}
+                      </option>
+                    ))}
+                  </select>
+                </label>
+                {certificadoras.length === 0 ? (
+                  <p className="self-end text-sm text-amber-700">
+                    Nenhuma certificadora cadastrada.{' '}
+                    {usuario.role === 'ADMIN' ? (
+                      <Link href="/usuarios" className="link">
+                        Cadastrar em Usuários
+                      </Link>
+                    ) : (
+                      'Peça ao administrador para cadastrar.'
+                    )}
+                  </p>
+                ) : null}
+              </div>
             }
           />
         </Cartao>
@@ -77,6 +106,7 @@ export default function LotesPage() {
               <thead>
                 <tr>
                   <th>Lote</th>
+                  {equipe ? <th>Certificadora</th> : null}
                   <th>Situação</th>
                   <th className="text-center">Alunos</th>
                   <th className="text-center">Certificados</th>
@@ -93,6 +123,7 @@ export default function LotesPage() {
                       </Link>
                       {lote.importado ? <span className="ml-2 rounded-full bg-slate-100 px-2 py-0.5 text-xs text-slate-600">planilha antiga</span> : null}
                     </td>
+                    {equipe ? <td className="text-slate-600">{lote.certificadora?.nome ?? '—'}</td> : null}
                     <td>
                       <StatusLoteBadge status={lote.status} />
                     </td>
