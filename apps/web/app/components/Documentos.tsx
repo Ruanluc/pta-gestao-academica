@@ -157,27 +157,31 @@ export function UploadDocumento({
   onEnviado: () => void;
 }) {
   const [tipo, setTipo] = useState<TipoDocumento>(tipoInicial);
-  const [arquivo, setArquivo] = useState<File | null>(null);
+  const [arquivos, setArquivos] = useState<File[]>([]);
   const [enviando, setEnviando] = useState(false);
   const campoArquivo = useRef<HTMLInputElement>(null);
   const { mensagem, erro, sucesso, limpar } = useMensagem();
 
   const enviar = async (evento: FormEvent) => {
     evento.preventDefault();
-    if (!arquivo) return;
+    if (!arquivos.length) return;
     setEnviando(true);
     limpar();
 
-    // Os campos de texto precisam vir antes do arquivo
     const dados = new FormData();
     dados.append('alunoId', alunoId);
     dados.append('tipo', tipo);
-    dados.append('arquivo', arquivo);
+    // Vários arquivos (ex.: frente e verso) viram um único PDF, nesta ordem
+    arquivos.forEach((arquivo) => dados.append('arquivo', arquivo));
 
     try {
       await apiUpload('/documentos/upload', dados);
-      sucesso('Documento enviado. Ele ficará aguardando análise.');
-      setArquivo(null);
+      sucesso(
+        arquivos.length > 1
+          ? `${arquivos.length} arquivos juntados em um único PDF. O documento ficará aguardando análise.`
+          : 'Documento enviado (guardado em PDF). Ele ficará aguardando análise.',
+      );
+      setArquivos([]);
       if (campoArquivo.current) campoArquivo.current.value = '';
       onEnviado();
     } catch (falha) {
@@ -200,17 +204,18 @@ export function UploadDocumento({
             ))}
           </select>
         </Campo>
-        <Campo rotulo="Arquivo (PDF, JPG, PNG ou WEBP)">
+        <Campo rotulo="Arquivos (PDF, JPG ou PNG)" dica="Frente e verso? Selecione as fotos juntas: viram um único PDF.">
           <input
             ref={campoArquivo}
             type="file"
-            accept="application/pdf,image/jpeg,image/png,image/webp"
-            onChange={(evento) => setArquivo(evento.target.files?.[0] ?? null)}
+            multiple
+            accept="application/pdf,image/jpeg,image/png"
+            onChange={(evento) => setArquivos(Array.from(evento.target.files ?? []))}
             required
             className="input file:mr-3 file:rounded-md file:border-0 file:bg-indigo-50 file:px-3 file:py-1 file:text-sm file:text-indigo-700"
           />
         </Campo>
-        <button type="submit" disabled={enviando || !arquivo} className="btn btn-primario">
+        <button type="submit" disabled={enviando || !arquivos.length} className="btn btn-primario">
           <Upload className="h-4 w-4" /> {enviando ? 'Enviando...' : 'Enviar'}
         </button>
       </div>

@@ -66,6 +66,25 @@ export const apiUpload = async <T = unknown>(path: string, dados: FormData): Pro
   return (await resposta.json()) as T;
 };
 
+/** Baixa um arquivo protegido da API (ex.: o .zip do lote) com o nome enviado pelo servidor. */
+export const baixarArquivo = async (path: string, nomePadrao = 'arquivo') => {
+  const resposta = await apiFetch(path);
+  if (!resposta.ok) throw await lerErro(resposta);
+
+  const disposicao = resposta.headers.get('Content-Disposition') ?? '';
+  const nomeCodificado = disposicao.match(/filename\*=UTF-8''([^;]+)/i)?.[1];
+  const nome = (nomeCodificado ? decodeURIComponent(nomeCodificado) : disposicao.match(/filename="([^"]+)"/i)?.[1]) || nomePadrao;
+
+  const url = URL.createObjectURL(await resposta.blob());
+  const link = document.createElement('a');
+  link.href = url;
+  link.download = nome;
+  document.body.appendChild(link);
+  link.click();
+  link.remove();
+  setTimeout(() => URL.revokeObjectURL(url), 60_000);
+};
+
 /** Abre em nova aba um arquivo protegido (PDF, imagem) da API. */
 export const abrirArquivo = async (path: string) => {
   // A aba é aberta antes da requisição para o navegador não bloquear como pop-up

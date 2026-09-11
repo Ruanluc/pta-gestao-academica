@@ -105,6 +105,10 @@ node -e "console.log(require('crypto').randomBytes(48).toString('base64url'))"
     e-mail que já estava no cadastro.
 - **Portal do aluno** (`/portal`): o aluno vê sua situação, as pendências, os documentos exigidos, envia e reenvia
   arquivos e vê o motivo de rejeições. A secretaria analisa em **Documentos**, como antes.
+- **Documentos sempre em PDF** (exigência do MEC): fotos JPG/PNG são convertidas em PDF no envio, em página A4 e
+  já em pé (a rotação das fotos de celular é corrigida). Vários arquivos enviados juntos — ex.: frente e verso do
+  RG — viram **um único PDF**, na ordem escolhida (até 10 por documento). Um PDF sozinho é guardado como veio.
+  WEBP e outros formatos não são aceitos.
 - **Acesso sem senha**: por um link pessoal válido por `LINK_ALUNO_DIAS` (7) dias. Na página do aluno, o botão
   **"Gerar link de acesso"** envia por e-mail (se houver SMTP) e mostra o link para copiar e mandar por WhatsApp.
   Gerar um novo link invalida o anterior. O aluno também pode pedir um link novo em `/portal/entrar` (CPF + e-mail).
@@ -124,6 +128,11 @@ node -e "console.log(require('crypto').randomBytes(48).toString('base64url'))"
 - A equipe é avisada quando faltam `ALERTA_PRAZO_DIAS` (5) dias para o prazo e quando ele vence.
 - **Perfil Certificadora** (crie em Usuários): acesso **somente** aos lotes já enviados. Ela baixa os históricos,
   registra cada certificado (número e data) ou "todos os pendentes"; o lote se conclui sozinho.
+- **Documentação para a certificadora**: na página do lote, **Baixar lote completo (.zip)** (ou **Documentos**, por
+  aluno) gera um pacote com uma pasta por aluno — histórico e documentos aprovados, em PDF — e uma planilha-índice.
+  Documentos conferidos antes do sistema, que só existem na pasta antiga do Drive, entram como um aviso com o link
+  da pasta. A certificadora baixa pelo login dela (só os lotes dela); com o Google Drive configurado, a pasta do
+  lote no Drive continua disponível também.
 - **Certificado digital**: ao **anexar o PDF** do certificado (certificadora ou equipe), ele é guardado na pasta do
   aluno, enviado a ele **por e-mail com o PDF anexo** e fica para download no portal. A equipe pode reenviar por e-mail
   ou **registrar uma entrega feita por fora** (WhatsApp etc.). Só o certificado digital é controlado (o físico não).

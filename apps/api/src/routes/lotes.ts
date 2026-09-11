@@ -1,5 +1,7 @@
-import type { FastifyPluginAsync, FastifyRequest } from 'fastify';
+import type { Readable } from 'stream';
+import type { FastifyPluginAsync, FastifyReply, FastifyRequest } from 'fastify';
 import type { Prisma } from '@prisma/client';
+import { gerarPacoteLote } from '../services/pacoteLote';
 import { z } from 'zod';
 import { registrarAuditoria } from '../lib/audit';
 import { config } from '../config';
@@ -206,6 +208,28 @@ export const loteRoutes: FastifyPluginAsync = async (app) => {
     if (canal === 'email') await reenviarCertificadoPorEmail(id, itemId, usuarioId);
     else await registrarEntregaManual(id, itemId, enviadoEm ?? new Date(), usuarioId);
     return { ok: true };
+  });
+
+  /** Pacote (.zip) para a certificadora: uma pasta por aluno com o histórico e os documentos aprovados, e o índice. */
+  const enviarPacote = (reply: FastifyReply, pacote: { stream: Readable; nome: string }) =>
+    reply
+      .header('Content-Type', 'application/zip')
+      .header('Content-Disposition', contentDisposition(pacote.nome))
+      .header('Cache-Control', 'private, no-store')
+      .send(pacote.stream);
+
+  app.get('/:id/pacote', async (request, reply) => {
+    const { id } = idParams.parse(request.params);
+    const pacote = await gerarPacoteLote(id, await filtroVisivel(request));
+    await registrarAuditoria({ usuarioId: usuarioLogado(request).id, acao: 'DOWNLOAD_PACOTE_LOTE', entidade: 'LoteCertificacao', entidadeId: id, detalhes: { alunos: pacote.alunos } });
+    return enviarPacote(reply, pacote);
+  });
+
+  app.get('/:id/itens/:itemId/pacote', async (request, reply) => {
+    const { id, itemId } = itemParams.parse(request.params);
+    const pacote = await gerarPacoteLote(id, await filtroVisivel(request), itemId);
+    await registrarAuditoria({ usuarioId: usuarioLogado(request).id, acao: 'DOWNLOAD_PACOTE_ALUNO', entidade: 'LoteCertificacao', entidadeId: id, detalhes: { itemId } });
+    return enviarPacote(reply, pacote);
   });
 
   /** Histórico final de um aluno do lote (para quem não usa a pasta do Drive). */

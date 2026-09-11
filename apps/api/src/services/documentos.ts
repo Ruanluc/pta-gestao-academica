@@ -1,16 +1,20 @@
+import { Readable } from 'stream';
 import type { FastifyReply, FastifyRequest } from 'fastify';
-import type { MultipartFields } from '@fastify/multipart';
 import { TipoDocumento } from '@prisma/client';
 import { z } from 'zod';
+import { config } from '../config';
 import { prisma } from '../lib/prisma';
 import { registrarAuditoria } from '../lib/audit';
 import { HttpError } from '../lib/errors';
 import { contentDisposition } from '../lib/http';
-import { abrirArquivo, removerArquivo, salvarArquivo } from '../lib/storage';
+import { montarPdfDocumento, pareceUmPdf, TIPOS_ACEITOS, type ArquivoRecebido } from '../lib/pdfDocumentos';
+import { ROTULOS_DOCUMENTO } from '../lib/semaforo';
+import { abrirArquivo, salvarArquivo } from '../lib/storage';
 import { idSchema } from '../lib/validation';
 import { pastaDriveEnvioAutomatico, sincronizarAluno } from './academico';
 
-const TIPOS_PERMITIDOS = new Set(['application/pdf', 'image/jpeg', 'image/png', 'image/webp']);
+/** Arquivos por envio (ex.: frente e verso, várias páginas de um histórico). */
+export const MAXIMO_ARQUIVOS_POR_DOCUMENTO = 10;
 
 export const SELECAO_DOCUMENTO = {
   id: true,
@@ -30,61 +34,70 @@ export const SELECAO_DOCUMENTO = {
   analisadoPor: { select: { nome: true } },
 } as const;
 
-const valorCampo = (campos: MultipartFields, nome: string) => {
-  const campo = campos[nome];
-  const unico = Array.isArray(campo) ? campo[0] : campo;
-  return unico && unico.type === 'field' ? String(unico.value) : undefined;
+/** Lê os campos e todos os arquivos do FormData (qualquer ordem). */
+const lerEnvio = async (request: FastifyRequest) => {
+  const campos: Record<string, string> = {};
+  const arquivos: ArquivoRecebido[] = [];
+  try {
+    for await (const parte of request.parts()) {
+      if (parte.type === 'field') {
+        campos[parte.fieldname] = String(parte.value);
+        continue;
+      }
+      if (!TIPOS_ACEITOS.includes(parte.mimetype)) {
+        parte.file.resume();
+        throw new HttpError(415, `"${parte.filename}": formato não aceito. Envie PDF, JPG ou PNG.`);
+      }
+      arquivos.push({ conteudo: await parte.toBuffer(), mimeType: parte.mimetype, nome: parte.filename || 'documento' });
+    }
+  } catch (erro) {
+    const codigo = (erro as { code?: string }).code;
+    if (codigo === 'FST_REQ_FILE_TOO_LARGE') throw new HttpError(413, `Cada arquivo pode ter no máximo ${config.uploadMaxMb} MB.`);
+    if (codigo === 'FST_FILES_LIMIT') throw new HttpError(413, `Envie no máximo ${MAXIMO_ARQUIVOS_POR_DOCUMENTO} arquivos por documento.`);
+    throw erro;
+  }
+  return { campos, arquivos };
 };
 
 /**
- * Recebe o upload multipart de um documento.
+ * Recebe um documento (um ou mais arquivos no campo "arquivo").
  * Equipe: o aluno vem do campo "alunoId". Portal: o aluno é o da sessão (alunoIdFixo).
- * Os campos de texto ("alunoId", "tipo") devem vir ANTES do campo "arquivo" no FormData.
+ * Exigência do MEC: o documento é sempre guardado em PDF. Fotos são convertidas e vários arquivos
+ * (ex.: frente e verso) viram um único PDF, na ordem enviada. Um PDF sozinho é guardado como veio.
  */
 export const receberDocumento = async (
   request: FastifyRequest,
   { alunoIdFixo, enviadoPorId }: { alunoIdFixo?: string; enviadoPorId: string | null },
 ) => {
-  const arquivo = await request.file();
-  if (!arquivo) throw new HttpError(400, 'Envie um arquivo');
+  const { campos, arquivos } = await lerEnvio(request);
+  if (!arquivos.length) throw new HttpError(400, 'Envie ao menos um arquivo');
 
-  let dados: { alunoId: string; tipo: TipoDocumento };
-  try {
-    dados = z
-      .object({ alunoId: idSchema, tipo: z.nativeEnum(TipoDocumento) })
-      .parse({ alunoId: alunoIdFixo ?? valorCampo(arquivo.fields, 'alunoId'), tipo: valorCampo(arquivo.fields, 'tipo') });
+  const dados = z
+    .object({ alunoId: idSchema, tipo: z.nativeEnum(TipoDocumento) })
+    .parse({ alunoId: alunoIdFixo ?? campos.alunoId, tipo: campos.tipo });
 
-    if (!TIPOS_PERMITIDOS.has(arquivo.mimetype)) {
-      throw new HttpError(415, 'Formato não permitido. Envie PDF, JPG, PNG ou WEBP.');
-    }
+  const aluno = await prisma.aluno.findUnique({ where: { id: dados.alunoId }, select: { id: true } });
+  if (!aluno) throw new HttpError(404, 'Aluno não encontrado');
 
-    const aluno = await prisma.aluno.findUnique({ where: { id: dados.alunoId }, select: { id: true } });
-    if (!aluno) throw new HttpError(404, 'Aluno não encontrado');
-  } catch (erro) {
-    arquivo.file.resume(); // descarta o restante do upload
-    throw erro;
-  }
+  const unicoPdf = arquivos.length === 1 && arquivos[0].mimeType === 'application/pdf';
+  if (unicoPdf && !pareceUmPdf(arquivos[0].conteudo)) throw new HttpError(415, `"${arquivos[0].nome}" não é um PDF válido.`);
+  const conteudo = unicoPdf ? arquivos[0].conteudo : await montarPdfDocumento(arquivos);
+  const nomeArquivo = arquivos.length === 1 ? `${arquivos[0].nome.replace(/\.[^.]+$/, '') || 'documento'}.pdf` : `${ROTULOS_DOCUMENTO[dados.tipo]}.pdf`;
 
-  const pastaDriveId = await pastaDriveEnvioAutomatico(dados.alunoId);
   const salvo = await salvarArquivo({
-    stream: arquivo.file,
-    nomeArquivo: arquivo.filename || 'documento',
-    mimeType: arquivo.mimetype,
+    stream: Readable.from(conteudo),
+    nomeArquivo,
+    mimeType: 'application/pdf',
     subpasta: `alunos/${dados.alunoId}`,
-    pastaDriveId,
+    pastaDriveId: await pastaDriveEnvioAutomatico(dados.alunoId),
   });
-
-  if (arquivo.file.truncated) {
-    await removerArquivo(salvo.ref);
-    throw new HttpError(413, 'Arquivo acima do tamanho máximo permitido');
-  }
 
   const documento = await prisma.documento.create({
     data: {
       alunoId: dados.alunoId,
       tipo: dados.tipo,
-      nomeArquivo: arquivo.filename || 'documento',
-      mimeType: arquivo.mimetype,
+      nomeArquivo,
+      mimeType: 'application/pdf',
       tamanho: salvo.tamanho,
       arquivoRef: salvo.ref,
       driveLink: salvo.link,

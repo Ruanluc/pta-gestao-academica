@@ -3,8 +3,8 @@
 import Link from 'next/link';
 import { useRouter } from 'next/navigation';
 import { useCallback, useEffect, useRef, useState, type FormEvent } from 'react';
-import { ExternalLink, FileDown, FolderSync, Mail, Plus, Send, Trash2, Upload } from 'lucide-react';
-import { abrirArquivo, api, ApiError, apiUpload } from '../../lib/api';
+import { Download, ExternalLink, FileDown, FolderSync, Mail, Plus, Send, Trash2, Upload } from 'lucide-react';
+import { abrirArquivo, api, ApiError, apiUpload, baixarArquivo } from '../../lib/api';
 import { formatarData, formatarDataHora, mascararCpf } from '../../lib/formato';
 import type { ItemLote, LoteDetalhe } from '../../lib/tipos';
 import { useUsuario } from '../../components/AppShell';
@@ -273,6 +273,18 @@ export default function LoteDetalhePage({ params }: { params: { id: string } }) 
     );
   };
 
+  const baixarPacote = async (caminho: string) => {
+    setOcupado(true);
+    limpar();
+    try {
+      await baixarArquivo(caminho, 'lote.zip');
+    } catch (falha) {
+      erro(falha);
+    } finally {
+      setOcupado(false);
+    }
+  };
+
   const anotar = (item: ItemLote) => {
     const texto = window.prompt(`Anotação sobre ${item.matricula.aluno.nome} (ex.: FALTA CPF). Deixe vazio para apagar:`, item.observacao ?? '');
     if (texto === null) return;
@@ -325,25 +337,26 @@ export default function LoteDetalhePage({ params }: { params: { id: string } }) 
 
       <Aviso mensagem={mensagem} onFechar={limpar} />
 
-      {!aberto ? (
-        <Cartao titulo="Pasta do lote no Google Drive">
+      {lote.itens.length ? (
+        <Cartao
+          titulo="Arquivos do lote"
+          descricao="Uma pasta por aluno com o histórico e os documentos aprovados (em PDF), mais a planilha-índice. Documentos conferidos antes do sistema vêm com o link da pasta antiga do Drive."
+        >
           <div className="flex flex-wrap items-center gap-3 text-sm">
-            {lote.pastaLink ? (
+            <button type="button" disabled={ocupado} onClick={() => void baixarPacote(`/lotes/${lote.id}/pacote`)} className="btn btn-primario">
+              <Download className="h-4 w-4" /> Baixar lote completo (.zip)
+            </button>
+            {!aberto && lote.pastaLink ? (
               <a href={lote.pastaLink} target="_blank" rel="noreferrer" className="btn btn-secundario">
-                <ExternalLink className="h-4 w-4" /> Abrir pasta do lote
+                <ExternalLink className="h-4 w-4" /> Abrir pasta do lote no Drive
               </a>
-            ) : (
-              <span className="text-slate-600">
-                {lote.driveConfigurado
-                  ? 'A pasta ainda não foi montada.'
-                  : 'O Google Drive não está configurado. Enquanto isso, os históricos podem ser baixados na lista abaixo.'}
-              </span>
-            )}
-            {equipe && lote.driveConfigurado ? (
+            ) : null}
+            {!aberto && equipe && lote.driveConfigurado ? (
               <button type="button" disabled={ocupado} onClick={montarPasta} className="btn btn-fantasma">
                 <FolderSync className="h-4 w-4" /> {lote.pastaLink ? 'Atualizar pasta' : 'Montar pasta no Drive'}
               </button>
             ) : null}
+            {!lote.driveConfigurado ? <span className="text-slate-500">Google Drive ainda não configurado: use o .zip.</span> : null}
           </div>
         </Cartao>
       ) : null}
@@ -390,7 +403,7 @@ export default function LoteDetalhePage({ params }: { params: { id: string } }) 
                 <tr>
                   <th>Aluno</th>
                   <th>Turma</th>
-                  <th>Histórico</th>
+                  <th>Histórico e documentos</th>
                   <th>Certificado digital</th>
                   {equipe && aberto ? <th /> : null}
                 </tr>
@@ -416,9 +429,20 @@ export default function LoteDetalhePage({ params }: { params: { id: string } }) 
                     </td>
                     <td className="text-slate-600">{item.matricula.turma.nome}</td>
                     <td>
-                      <button type="button" onClick={() => void baixarHistorico(item)} className="btn btn-secundario btn-sm">
-                        <FileDown className="h-3.5 w-3.5" /> PDF
-                      </button>
+                      <div className="flex flex-wrap gap-1.5">
+                        <button type="button" onClick={() => void baixarHistorico(item)} className="btn btn-secundario btn-sm">
+                          <FileDown className="h-3.5 w-3.5" /> Histórico
+                        </button>
+                        <button
+                          type="button"
+                          disabled={ocupado}
+                          onClick={() => void baixarPacote(`/lotes/${lote.id}/itens/${item.id}/pacote`)}
+                          className="btn btn-secundario btn-sm"
+                          title="Histórico e documentos aprovados do aluno (.zip)"
+                        >
+                          <Download className="h-3.5 w-3.5" /> Documentos
+                        </button>
+                      </div>
                     </td>
                     <td>
                       <RegistroCertificado

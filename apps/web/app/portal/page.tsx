@@ -39,7 +39,7 @@ export default function PortalAlunoPage() {
   const router = useRouter();
   const [dados, setDados] = useState<DadosPortal | null>(null);
   const [tipo, setTipo] = useState<TipoDocumento>('RG');
-  const [arquivo, setArquivo] = useState<File | null>(null);
+  const [arquivos, setArquivos] = useState<File[]>([]);
   const [enviando, setEnviando] = useState(false);
   const campoArquivo = useRef<HTMLInputElement>(null);
   const { mensagem, definir, erro, sucesso, limpar } = useMensagem();
@@ -76,19 +76,19 @@ export default function PortalAlunoPage() {
 
   const enviar = async (evento: FormEvent) => {
     evento.preventDefault();
-    if (!arquivo) return;
+    if (!arquivos.length) return;
     setEnviando(true);
     limpar();
 
-    // O tipo precisa vir antes do arquivo
     const formulario = new FormData();
     formulario.append('tipo', tipo);
-    formulario.append('arquivo', arquivo);
+    // Frente e verso (ou várias páginas) viram um único PDF, nesta ordem
+    arquivos.forEach((arquivo) => formulario.append('arquivo', arquivo));
 
     try {
       await portalApi('/portal/documentos', { method: 'POST', body: formulario });
       sucesso(`${ROTULOS_DOCUMENTO[tipo]} enviado. A secretaria vai analisar e você acompanha a situação por aqui.`);
-      setArquivo(null);
+      setArquivos([]);
       if (campoArquivo.current) campoArquivo.current.value = '';
       await carregar();
     } catch (falha) {
@@ -189,17 +189,18 @@ export default function PortalAlunoPage() {
                     ))}
                   </select>
                 </Campo>
-                <Campo rotulo="Arquivo (PDF, JPG, PNG ou WEBP)">
+                <Campo rotulo="Arquivos (PDF, JPG ou PNG)" dica="Frente e verso? Selecione as duas fotos juntas: viram um único PDF.">
                   <input
                     ref={campoArquivo}
                     type="file"
-                    accept="application/pdf,image/jpeg,image/png,image/webp"
-                    onChange={(evento) => setArquivo(evento.target.files?.[0] ?? null)}
+                    multiple
+                    accept="application/pdf,image/jpeg,image/png"
+                    onChange={(evento) => setArquivos(Array.from(evento.target.files ?? []))}
                     required
                     className="input file:mr-3 file:rounded-md file:border-0 file:bg-indigo-50 file:px-3 file:py-1 file:text-sm file:text-indigo-700"
                   />
                 </Campo>
-                <button type="submit" disabled={enviando || !arquivo} className="btn btn-primario">
+                <button type="submit" disabled={enviando || !arquivos.length} className="btn btn-primario">
                   <Upload className="h-4 w-4" /> {enviando ? 'Enviando...' : 'Enviar'}
                 </button>
               </div>

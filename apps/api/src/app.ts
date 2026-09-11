@@ -37,7 +37,8 @@ export const buildApp = async (opcoes: FastifyServerOptions = {}) => {
   });
 
   await app.register(multipart, {
-    limits: { fileSize: config.uploadMaxMb * 1024 * 1024, files: 1, fields: 10 },
+    // Até 10 arquivos por documento (ex.: frente e verso), juntados em um único PDF
+    limits: { fileSize: config.uploadMaxMb * 1024 * 1024, files: 10, fields: 10 },
   });
 
   app.setErrorHandler(tratarErro);

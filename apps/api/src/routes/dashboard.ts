@@ -25,8 +25,9 @@ export const dashboardRoutes: FastifyPluginAsync = async (app) => {
       prisma.loteCertificacao.count({ where: { status: 'ABERTO' } }),
       prisma.loteCertificacao.count({ where: { status: 'ENVIADO' } }),
       prisma.solicitacaoAlteracao.count({ where: { status: 'PENDENTE' } }),
+      // Lotes reconstruídos das planilhas antigas não entram no prazo (como nos alertas)
       prisma.loteCertificacao.findFirst({
-        where: { status: 'ENVIADO', prazoEm: { not: null } },
+        where: { status: 'ENVIADO', prazoEm: { not: null }, importado: false },
         orderBy: { prazoEm: 'asc' },
         select: { id: true, referencia: true, prazoEm: true, itens: { where: { certificadoEmitidoEm: null }, select: { id: true } } },
       }),
