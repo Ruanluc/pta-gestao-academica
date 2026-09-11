@@ -7,6 +7,7 @@ import { armazenamentoAtual } from './lib/storage';
 import { gerarHistoricoFinal } from './services/academico';
 import { statusCademi } from './lib/cademi';
 import { iniciarSincronizacaoAutomatica, pararSincronizacaoAutomatica } from './services/cademi';
+import { iniciarRotinas, pararRotinas } from './services/rotinas';
 
 const iniciar = async () => {
   try {
@@ -22,11 +23,13 @@ const iniciar = async () => {
   const app = await buildApp();
   iniciarFila(gerarHistoricoFinal);
   const cademiAutomatica = iniciarSincronizacaoAutomatica();
+  iniciarRotinas();
 
   const encerrar = async (sinal: string) => {
     console.info(`\n[api] ${sinal} recebido, encerrando...`);
     await app.close().catch(() => undefined);
     pararSincronizacaoAutomatica();
+    pararRotinas();
     await encerrarFila();
     await prisma.$disconnect();
     process.exit(0);

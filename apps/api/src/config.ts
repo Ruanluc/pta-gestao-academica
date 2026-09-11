@@ -63,6 +63,17 @@ export const config = {
     diasValidadeLink: numero(process.env.LINK_ALUNO_DIAS, 7),
     horasSessao: numero(process.env.SESSAO_ALUNO_HORAS, 12),
   },
+  avisos: {
+    // Avisos por e-mail aos alunos, à certificadora e à equipe (false desliga todos)
+    email: texto(process.env.AVISOS_EMAIL) !== 'false',
+    // Lembrete de documentos/dados pendentes a cada N dias (0 = desligado)
+    lembretePendenciasDias: numero(process.env.LEMBRETE_PENDENCIAS_DIAS, 7),
+  },
+  certificacao: {
+    // Prazo da certificadora a partir do envio do lote e aviso à equipe N dias antes de vencer
+    prazoDias: numero(process.env.PRAZO_CERTIFICADORA_DIAS, 30),
+    alertaDias: numero(process.env.ALERTA_PRAZO_DIAS, 5),
+  },
   cademi: {
     apiUrl: texto(process.env.CADEMI_API_URL)?.replace(/\/$/, ''),
     token: texto(process.env.CADEMI_API_TOKEN),

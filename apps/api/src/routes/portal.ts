@@ -14,8 +14,11 @@ import { registrarAuditoria } from '../lib/audit';
 import { HttpError } from '../lib/errors';
 import { criarLimitador } from '../lib/rateLimit';
 import { calcularSemaforo, documentosObrigatorios } from '../lib/semaforo';
-import { cpfSchema, emailSchema, idParams } from '../lib/validation';
+import { cpfSchema, dataOpcional, emailSchema, idParams, textoObrigatorio, textoOpcional } from '../lib/validation';
+import { classificarAlteracoes } from '../lib/correcaoDados';
 import { receberDocumento, responderArquivo } from '../services/documentos';
+import { sincronizarAluno } from '../services/academico';
+import type { Prisma } from '@prisma/client';
 
 const limitarPedidoLink = criarLimitador({ max: 5, janelaMs: 15 * 60 * 1000 });
 
@@ -64,6 +67,7 @@ export const portalRoutes: FastifyPluginAsync = async (app) => {
             orderBy: { dataInclusao: 'desc' },
             select: { turma: { select: { nome: true, dataInicio: true, dataFim: true, disciplinas: { select: { id: true } } } } },
           },
+          solicitacoes: { orderBy: { criadoEm: 'desc' }, take: 1 },
         },
       });
       if (!aluno) throw new HttpError(404, 'Cadastro não encontrado');
@@ -88,7 +92,74 @@ export const portalRoutes: FastifyPluginAsync = async (app) => {
         documentosObrigatorios: documentosObrigatorios(aluno.condicaoGraduacao),
         documentos: aluno.documentos,
         turmas: aluno.matriculas.map(({ turma }) => ({ nome: turma.nome, dataInicio: turma.dataInicio, dataFim: turma.dataFim })),
+        dados: {
+          nome: aluno.nome,
+          email: aluno.email,
+          telefone: aluno.telefone,
+          dataNascimento: aluno.dataNascimento,
+          nacionalidade: aluno.nacionalidade,
+          naturalidade: aluno.naturalidade,
+          filiacao: aluno.filiacao,
+          rgNumero: aluno.rgNumero,
+          rgOrgaoEmissor: aluno.rgOrgaoEmissor,
+        },
+        ultimaSolicitacao: aluno.solicitacoes[0]
+          ? {
+              status: aluno.solicitacoes[0].status,
+              dados: JSON.parse(aluno.solicitacoes[0].dados),
+              motivoRecusa: aluno.solicitacoes[0].motivoRecusa,
+              criadoEm: aluno.solicitacoes[0].criadoEm,
+              analisadoEm: aluno.solicitacoes[0].analisadoEm,
+            }
+          : null,
       };
+    });
+
+    /**
+     * Correção de dados pelo aluno: campos vazios (e o telefone) mudam na hora;
+     * alterar um dado já preenchido vira solicitação para a secretaria aprovar.
+     */
+    privado.put('/dados', async (request) => {
+      const alunoId = alunoDoPortal(request).id;
+      const novos = z
+        .object({
+          nome: textoObrigatorio(3, 200).optional(),
+          email: emailSchema.optional(),
+          telefone: textoOpcional(30),
+          dataNascimento: dataOpcional,
+          nacionalidade: textoOpcional(80),
+          naturalidade: textoOpcional(120),
+          filiacao: textoOpcional(300),
+          rgNumero: textoOpcional(30),
+          rgOrgaoEmissor: textoOpcional(30),
+        })
+        .parse(request.body ?? {});
+
+      const aluno = await prisma.aluno.findUnique({ where: { id: alunoId } });
+      if (!aluno) throw new HttpError(404, 'Cadastro não encontrado');
+
+      const { diretas, emAnalise } = classificarAlteracoes(aluno, novos);
+
+      if (Object.keys(diretas).length) {
+        await prisma.aluno.update({ where: { id: alunoId }, data: diretas as Prisma.AlunoUpdateInput });
+      }
+
+      if (Object.keys(emAnalise).length) {
+        const pendente = await prisma.solicitacaoAlteracao.findFirst({ where: { alunoId, status: 'PENDENTE' } });
+        const dados = JSON.stringify({ ...(pendente ? JSON.parse(pendente.dados) : {}), ...emAnalise });
+        if (pendente) await prisma.solicitacaoAlteracao.update({ where: { id: pendente.id }, data: { dados } });
+        else await prisma.solicitacaoAlteracao.create({ data: { alunoId, dados } });
+      }
+
+      await registrarAuditoria({
+        acao: 'DADOS_ALTERADOS_PORTAL',
+        entidade: 'Aluno',
+        entidadeId: alunoId,
+        detalhes: { aplicados: Object.keys(diretas), emAnalise: Object.keys(emAnalise) },
+      });
+      await sincronizarAluno(alunoId);
+
+      return { aplicados: Object.keys(diretas), emAnalise: Object.keys(emAnalise) };
     });
 
     /** Upload pelo aluno: campo "tipo" antes do campo "arquivo". */

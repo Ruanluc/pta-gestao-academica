@@ -4,6 +4,7 @@ import { useCallback, useEffect, useState } from 'react';
 import { api } from '../lib/api';
 import { ROTULOS_DOCUMENTO, ROTULOS_STATUS_DOCUMENTO, type Documento, type StatusDocumento, type TipoDocumento } from '../lib/tipos';
 import { ListaDocumentos } from '../components/Documentos';
+import { ListaSolicitacoes } from '../components/Solicitacoes';
 import { Aviso, Cabecalho, Carregando, Cartao, useMensagem } from '../components/ui';
 
 export default function DocumentosPage() {
@@ -33,6 +34,10 @@ export default function DocumentosPage() {
         titulo="Documentos"
         descricao="Análise da documentação enviada. Para enviar um documento, abra a página do aluno."
       />
+
+      <div className="mb-6">
+        <ListaSolicitacoes ocultarSeVazio />
+      </div>
 
       <Cartao>
         <div className="mb-4 flex flex-wrap gap-3">

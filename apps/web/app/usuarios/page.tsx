@@ -68,7 +68,7 @@ export default function UsuariosPage() {
 
   return (
     <div className="space-y-6">
-      <Cabecalho titulo="Usuários" descricao="Contas de acesso da equipe. Professores só lançam notas e consultam turmas e alunos." />
+      <Cabecalho titulo="Usuários" descricao="Contas de acesso. Professores só lançam notas e consultam turmas e alunos. A certificadora só vê os lotes enviados e registra os certificados." />
       <Aviso mensagem={mensagem} onFechar={limpar} />
 
       <Cartao titulo="Novo usuário">

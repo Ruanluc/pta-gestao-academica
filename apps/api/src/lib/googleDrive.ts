@@ -117,6 +117,28 @@ export const baixarArquivoDrive = async (fileId: string) => {
   return resposta.data as unknown as Readable;
 };
 
+/** Cópia feita no próprio Drive (sem baixar e reenviar o arquivo). */
+export const copiarArquivoDrive = async (fileId: string, nome: string, pastaId: string) => {
+  const { data } = await exigirDrive().files.copy({
+    fileId,
+    requestBody: { name: nome, parents: [pastaId] },
+    fields: 'id',
+    supportsAllDrives: true,
+  });
+  if (!data.id) throw new Error('O Google Drive não retornou o ID da cópia');
+  return data.id;
+};
+
+/** Dá acesso de leitura a uma pasta/arquivo para um e-mail (ex.: a certificadora). */
+export const compartilharComLeitor = async (arquivoId: string, email: string) => {
+  await exigirDrive().permissions.create({
+    fileId: arquivoId,
+    requestBody: { type: 'user', role: 'reader', emailAddress: email },
+    sendNotificationEmail: false,
+    supportsAllDrives: true,
+  });
+};
+
 export const removerArquivoDrive = async (fileId: string) => {
   await exigirDrive().files.delete({ fileId, supportsAllDrives: true });
 };

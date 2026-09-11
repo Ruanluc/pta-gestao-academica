@@ -10,6 +10,7 @@ import { slugificar } from '../lib/http';
 import { agendarHistorico } from '../lib/queue';
 import { calcularSemaforo, dadosFaltantesHistorico, matriculaConcluida, situacaoDisciplina } from '../lib/semaforo';
 import { removerArquivo, salvarArquivo } from '../lib/storage';
+import { avisarModulosConcluidos } from './notificacoes';
 
 /**
  * Recalcula o semáforo do aluno e dispara (ou invalida) o histórico final de cada matrícula.
@@ -201,6 +202,9 @@ const executarGeracao = async (matriculaId: string) => {
   if (matricula.historicoRef && matricula.historicoRef !== salvo.ref) {
     await removerArquivo(matricula.historicoRef);
   }
+
+  // Avisa o aluno uma única vez por matrícula
+  await avisarModulosConcluidos(matriculaId);
 
   await registrarAuditoria({
     acao: 'HISTORICO_GERADO',

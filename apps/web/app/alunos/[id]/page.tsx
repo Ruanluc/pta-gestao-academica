@@ -20,6 +20,7 @@ import { AlunoForm } from '../../components/AlunoForm';
 import { ChecklistDocumentos, ListaDocumentos, statusDoTipo, UploadDocumento } from '../../components/Documentos';
 import { LinkAcessoAluno } from '../../components/LinkAcessoAluno';
 import { PastaDrive } from '../../components/PastaDrive';
+import { ListaSolicitacoes } from '../../components/Solicitacoes';
 import { Aviso, Cabecalho, Carregando, Cartao, SemaforoBadge, SituacaoTexto, useMensagem, Vazio } from '../../components/ui';
 
 export default function AlunoDetalhePage({ params }: { params: { id: string } }) {
@@ -169,6 +170,8 @@ export default function AlunoDetalhePage({ params }: { params: { id: string } })
         </div>
       ) : null}
 
+      {equipe ? <ListaSolicitacoes alunoId={aluno.id} mostrarAluno={false} ocultarSeVazio onAlterado={() => void carregar()} /> : null}
+
       <Cartao titulo="Dados pessoais">
         {editando ? (
           <AlunoForm aluno={aluno} onSalvo={(salvo) => void aoSalvar(salvo)} onCancelar={() => setEditando(false)} />
@@ -298,6 +301,28 @@ export default function AlunoDetalhePage({ params }: { params: { id: string } })
           </div>
         )}
       </Cartao>
+
+      {equipe && aluno.notificacoes.length ? (
+        <Cartao titulo="Avisos enviados ao aluno" descricao="Últimos e-mails automáticos (sem SMTP configurado, ficam só registrados aqui).">
+          <ul className="divide-y divide-slate-100 text-sm">
+            {aluno.notificacoes.map((notificacao) => (
+              <li key={notificacao.id} className="flex flex-wrap items-center justify-between gap-2 py-2">
+                <span className="text-slate-800">{notificacao.assunto}</span>
+                <span className="text-xs text-slate-500">
+                  {formatarDataHora(notificacao.criadoEm)} ·{' '}
+                  {notificacao.erro ? (
+                    <span className="text-rose-700">falhou: {notificacao.erro}</span>
+                  ) : notificacao.enviado ? (
+                    <span className="text-emerald-700">enviado para {notificacao.para}</span>
+                  ) : (
+                    'registrado (e-mail não configurado)'
+                  )}
+                </span>
+              </li>
+            ))}
+          </ul>
+        </Cartao>
+      ) : null}
 
       {equipe ? (
         <PastaDrive

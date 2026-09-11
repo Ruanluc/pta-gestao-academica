@@ -15,6 +15,7 @@ import {
 } from '../lib/tipos';
 import { ChecklistDocumentos, statusDoTipo } from '../components/Documentos';
 import { PaginaPortal } from '../components/PaginaPortal';
+import { MeusDados, type DadosAlunoPortal, type UltimaSolicitacao } from '../components/MeusDados';
 import { Aviso, Campo, Carregando, Cartao, SemaforoBadge, StatusDocumentoBadge, useMensagem, Vazio } from '../components/ui';
 
 type DocumentoPortal = Pick<Documento, 'id' | 'tipo' | 'nomeArquivo' | 'tamanho' | 'status' | 'motivoRejeicao' | 'criadoEm'>;
@@ -28,6 +29,8 @@ type DadosPortal = {
   documentosObrigatorios: TipoDocumento[];
   documentos: DocumentoPortal[];
   turmas: Array<{ nome: string; dataInicio: string; dataFim: string }>;
+  dados: DadosAlunoPortal;
+  ultimaSolicitacao: UltimaSolicitacao;
 };
 
 export default function PortalAlunoPage() {
@@ -145,6 +148,8 @@ export default function PortalAlunoPage() {
               <p className="mt-4 text-sm font-medium text-emerald-700">Tudo certo com a sua documentação.</p>
             )}
           </Cartao>
+
+          <MeusDados dados={dados.dados} ultimaSolicitacao={dados.ultimaSolicitacao} onSalvo={() => void carregar()} />
 
           <Cartao
             titulo="Documentos exigidos"

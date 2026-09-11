@@ -1,4 +1,4 @@
-export type Role = 'ADMIN' | 'SECRETARIA' | 'PROFESSOR';
+export type Role = 'ADMIN' | 'SECRETARIA' | 'PROFESSOR' | 'CERTIFICADORA';
 export type StatusSemaforo = 'VERDE' | 'AMARELO' | 'VERMELHO';
 export type CondicaoGraduacao = 'CURSANDO' | 'CONCLUIDO_SEM_DIPLOMA' | 'CONCLUIDO_COM_DIPLOMA';
 export type TipoDocumento =
@@ -141,6 +141,7 @@ export type AlunoDetalhe = Aluno & {
   documentosObrigatorios: TipoDocumento[];
   regras: Regras;
   driveConfigurado: boolean;
+  notificacoes: Notificacao[];
 };
 
 export type Dashboard = {
@@ -149,6 +150,12 @@ export type Dashboard = {
   totalAlunos: number;
   documentosPendentes: number;
   semaforo: Record<StatusSemaforo, number>;
+  solicitacoesPendentes: number;
+  certificacao: {
+    lotesAbertos: number;
+    lotesComCertificadora: number;
+    proximoPrazo: { id: string; referencia: string; prazoEm: string; pendentes: number } | null;
+  };
   regras: Regras;
   integracoes: {
     armazenamento: 'google-drive' | 'local';
@@ -169,10 +176,121 @@ export type RegistroAuditoria = {
   usuario: { nome: string; email: string } | null;
 };
 
+export type StatusLote = 'ABERTO' | 'ENVIADO' | 'CONCLUIDO';
+
+export type LoteResumo = {
+  id: string;
+  referencia: string;
+  status: StatusLote;
+  enviadoEm: string | null;
+  prazoEm: string | null;
+  concluidoEm: string | null;
+  criadoEm: string;
+  totalAlunos: number;
+  certificadosEmitidos: number;
+};
+
+export type ItemLote = {
+  id: string;
+  matriculaId: string;
+  driveFolderId: string | null;
+  certificadoNumero: string | null;
+  certificadoEmitidoEm: string | null;
+  registradoPor: { nome: string } | null;
+  matricula: {
+    id: string;
+    historicoGeradoEm: string | null;
+    aluno: { id: string; nome: string; cpf: string; email?: string };
+    turma: { id: string; nome: string };
+  };
+};
+
+export type LoteDetalhe = Omit<LoteResumo, 'totalAlunos' | 'certificadosEmitidos'> & {
+  driveFolderId: string | null;
+  pastaLink: string | null;
+  driveConfigurado: boolean;
+  prazoDias: number;
+  criadoPor: { nome: string } | null;
+  itens: ItemLote[];
+};
+
+export type MatriculaApta = {
+  matriculaId: string;
+  aluno: { id: string; nome: string; cpf: string };
+  turma: { id: string; nome: string };
+  historicoGeradoEm: string | null;
+};
+
+export type Aptos = { aptas: MatriculaApta[]; comPendencia: Array<MatriculaApta & { pendencias: string[] }> };
+
+export type CampoEditavel =
+  | 'nome'
+  | 'email'
+  | 'telefone'
+  | 'dataNascimento'
+  | 'nacionalidade'
+  | 'naturalidade'
+  | 'filiacao'
+  | 'rgNumero'
+  | 'rgOrgaoEmissor';
+
+export const CAMPOS_EDITAVEIS: CampoEditavel[] = [
+  'nome',
+  'email',
+  'telefone',
+  'dataNascimento',
+  'nacionalidade',
+  'naturalidade',
+  'filiacao',
+  'rgNumero',
+  'rgOrgaoEmissor',
+];
+
+export const ROTULOS_CAMPOS: Record<CampoEditavel, string> = {
+  nome: 'Nome',
+  email: 'E-mail',
+  telefone: 'Telefone',
+  dataNascimento: 'Data de nascimento',
+  nacionalidade: 'Nacionalidade',
+  naturalidade: 'Naturalidade',
+  filiacao: 'Filiação',
+  rgNumero: 'Documento de identidade (RG)',
+  rgOrgaoEmissor: 'Órgão emissor',
+};
+
+export type SolicitacaoAlteracao = {
+  id: string;
+  alunoId: string;
+  status: 'PENDENTE' | 'APROVADA' | 'RECUSADA';
+  dados: Partial<Record<CampoEditavel, { atual: string; novo: string }>>;
+  motivoRecusa: string | null;
+  criadoEm: string;
+  analisadoEm: string | null;
+  aluno: { id: string; nome: string; cpf: string };
+  analisadoPor: { nome: string } | null;
+};
+
+export type Notificacao = {
+  id: string;
+  tipo: string;
+  assunto: string;
+  para: string;
+  enviado: boolean;
+  erro: string | null;
+  criadoEm: string;
+};
+
+export const ROTULOS_STATUS_LOTE: Record<StatusLote, string> = {
+  ABERTO: 'Em montagem',
+  ENVIADO: 'Com a certificadora',
+  CONCLUIDO: 'Concluído',
+};
+
 export const ROTULOS_ROLE: Record<Role, string> = {
   ADMIN: 'Administrador',
   SECRETARIA: 'Secretaria',
   PROFESSOR: 'Professor',
+  CERTIFICADORA: 'Certificadora',
 };
 
 export const ROTULOS_SEMAFORO: Record<StatusSemaforo, string> = {

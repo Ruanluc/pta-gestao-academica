@@ -93,6 +93,7 @@ export const alunoRoutes: FastifyPluginAsync = async (app) => {
           include: { enviadoPor: { select: { nome: true } }, analisadoPor: { select: { nome: true } } },
         },
         notas: true,
+        notificacoes: { orderBy: { criadoEm: 'desc' }, take: 10 },
       },
     });
 

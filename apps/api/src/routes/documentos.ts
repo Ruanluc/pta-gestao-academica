@@ -9,6 +9,8 @@ import { removerArquivo } from '../lib/storage';
 import { idParams, idSchema, textoOpcional } from '../lib/validation';
 import { sincronizarAluno } from '../services/academico';
 import { receberDocumento, responderArquivo, SELECAO_DOCUMENTO } from '../services/documentos';
+import { avisarDocumentacaoCompleta, avisarDocumentoRejeitado } from '../services/notificacoes';
+import { documentacaoCompleta } from '../lib/semaforo';
 
 export const documentoRoutes: FastifyPluginAsync = async (app) => {
   // Documentos pessoais: apenas administração e secretaria
@@ -60,6 +62,13 @@ export const documentoRoutes: FastifyPluginAsync = async (app) => {
     const logado = usuarioLogado(request);
     const analisado = status !== 'PENDENTE';
 
+    // Para avisar o aluno só na primeira vez que a documentação fica completa
+    const antes = await prisma.documento.findUnique({
+      where: { id },
+      select: { aluno: { select: { condicaoGraduacao: true, documentos: { select: { tipo: true, status: true } } } } },
+    });
+    const completaAntes = antes ? documentacaoCompleta(antes.aluno.condicaoGraduacao, antes.aluno.documentos) : false;
+
     const documento = await prisma.documento.update({
       where: { id },
       data: {
@@ -80,6 +89,17 @@ export const documentoRoutes: FastifyPluginAsync = async (app) => {
     });
 
     await sincronizarAluno(documento.alunoId);
+
+    if (status === 'REJEITADO') {
+      await avisarDocumentoRejeitado(documento.id);
+    } else if (status === 'APROVADO' && !completaAntes) {
+      const depois = await prisma.aluno.findUnique({
+        where: { id: documento.alunoId },
+        select: { condicaoGraduacao: true, documentos: { select: { tipo: true, status: true } } },
+      });
+      if (depois && documentacaoCompleta(depois.condicaoGraduacao, depois.documentos)) await avisarDocumentacaoCompleta(documento.alunoId);
+    }
+
     return documento;
   });
 

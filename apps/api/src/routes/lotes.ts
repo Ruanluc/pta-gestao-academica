@@ -1,0 +1,158 @@
+import type { FastifyPluginAsync, FastifyRequest } from 'fastify';
+import { z } from 'zod';
+import { config } from '../config';
+import { prisma } from '../lib/prisma';
+import { autenticar, COM_LOTES, EQUIPE, exigirPerfil, usuarioLogado } from '../lib/auth';
+import { HttpError } from '../lib/errors';
+import { driveHabilitado, linkPastaDrive } from '../lib/googleDrive';
+import { contentDisposition, slugificar } from '../lib/http';
+import { abrirArquivo } from '../lib/storage';
+import { dataObrigatoria, dataOpcional, idParams, idSchema, textoOpcional } from '../lib/validation';
+import {
+  adicionarItens,
+  criarLote,
+  enviarLote,
+  excluirLote,
+  gerarPastaDriveLote,
+  matriculasAptas,
+  registrarCertificado,
+  removerItem,
+} from '../services/lotes';
+
+const itemParams = z.object({ id: idSchema, itemId: idSchema });
+const referenciaSchema = z.string().regex(/^\d{4}-(0[1-9]|1[0-2])$/, 'Referência inválida (use AAAA-MM)');
+
+const ehCertificadora = (request: FastifyRequest) => usuarioLogado(request).role === 'CERTIFICADORA';
+
+export const loteRoutes: FastifyPluginAsync = async (app) => {
+  app.addHook('onRequest', autenticar(COM_LOTES));
+  const soEquipe = { preHandler: exigirPerfil(EQUIPE) };
+
+  // A certificadora só enxerga lotes já enviados
+  const filtroVisivel = (request: FastifyRequest) => (ehCertificadora(request) ? { status: { not: 'ABERTO' as const } } : {});
+
+  app.get('/aptos', soEquipe, async () => matriculasAptas());
+
+  app.get('/', async (request) => {
+    const lotes = await prisma.loteCertificacao.findMany({
+      where: filtroVisivel(request),
+      orderBy: { criadoEm: 'desc' },
+      include: { itens: { select: { certificadoEmitidoEm: true } } },
+    });
+    return lotes.map(({ itens, ...lote }) => ({
+      ...lote,
+      totalAlunos: itens.length,
+      certificadosEmitidos: itens.filter((item) => item.certificadoEmitidoEm).length,
+    }));
+  });
+
+  app.get('/:id', async (request) => {
+    const { id } = idParams.parse(request.params);
+    const certificadora = ehCertificadora(request);
+
+    const lote = await prisma.loteCertificacao.findFirst({
+      where: { id, ...filtroVisivel(request) },
+      include: {
+        criadoPor: { select: { nome: true } },
+        itens: {
+          orderBy: { matricula: { aluno: { nome: 'asc' } } },
+          include: {
+            registradoPor: { select: { nome: true } },
+            matricula: {
+              select: {
+                id: true,
+                historicoGeradoEm: true,
+                aluno: { select: { id: true, nome: true, cpf: true, email: !certificadora } },
+                turma: { select: { id: true, nome: true } },
+              },
+            },
+          },
+        },
+      },
+    });
+    if (!lote) throw new HttpError(404, 'Lote não encontrado');
+
+    return {
+      ...lote,
+      pastaLink: lote.driveFolderId ? linkPastaDrive(lote.driveFolderId) : null,
+      driveConfigurado: driveHabilitado(),
+      prazoDias: config.certificacao.prazoDias,
+    };
+  });
+
+  app.post('/', soEquipe, async (request, reply) => {
+    const dados = z
+      .object({ referencia: referenciaSchema.optional(), matriculaIds: z.array(idSchema).min(1, 'Selecione ao menos um aluno').max(500) })
+      .parse(request.body ?? {});
+    return reply.code(201).send(await criarLote(dados, usuarioLogado(request).id));
+  });
+
+  app.delete('/:id', soEquipe, async (request, reply) => {
+    const { id } = idParams.parse(request.params);
+    await excluirLote(id, usuarioLogado(request).id);
+    return reply.code(204).send();
+  });
+
+  app.post('/:id/itens', soEquipe, async (request) => {
+    const { id } = idParams.parse(request.params);
+    const { matriculaIds } = z.object({ matriculaIds: z.array(idSchema).min(1).max(500) }).parse(request.body ?? {});
+    await adicionarItens(id, matriculaIds, usuarioLogado(request).id);
+    return { ok: true };
+  });
+
+  app.delete('/:id/itens/:itemId', soEquipe, async (request, reply) => {
+    const { id, itemId } = itemParams.parse(request.params);
+    await removerItem(id, itemId, usuarioLogado(request).id);
+    return reply.code(204).send();
+  });
+
+  app.post('/:id/enviar', soEquipe, async (request) => {
+    const { id } = idParams.parse(request.params);
+    return enviarLote(id, usuarioLogado(request).id);
+  });
+
+  app.post('/:id/pasta-drive', soEquipe, async (request) => {
+    const { id } = idParams.parse(request.params);
+    return gerarPastaDriveLote(id, usuarioLogado(request).id);
+  });
+
+  /** Certificadora (ou equipe) registra o certificado de um aluno; sem data = desfaz o registro. */
+  app.patch('/:id/itens/:itemId/certificado', async (request) => {
+    const { id, itemId } = itemParams.parse(request.params);
+    const { numero, emitidoEm } = z
+      .object({ numero: textoOpcional(60), emitidoEm: dataOpcional })
+      .parse(request.body ?? {});
+    await registrarCertificado(id, itemId, { numero, emitidoEm: emitidoEm ?? null }, usuarioLogado(request).id);
+    return { ok: true };
+  });
+
+  /** Marca como emitidos todos os certificados ainda pendentes do lote. */
+  app.post('/:id/certificados', async (request) => {
+    const { id } = idParams.parse(request.params);
+    const { emitidoEm } = z.object({ emitidoEm: dataObrigatoria }).parse(request.body ?? {});
+    const pendentes = await prisma.itemLote.findMany({ where: { loteId: id, certificadoEmitidoEm: null }, select: { id: true } });
+    for (const item of pendentes) {
+      await registrarCertificado(id, item.id, { emitidoEm }, usuarioLogado(request).id);
+    }
+    return { registrados: pendentes.length };
+  });
+
+  /** Histórico final de um aluno do lote (para quem não usa a pasta do Drive). */
+  app.get('/:id/itens/:itemId/historico', async (request, reply) => {
+    const { id, itemId } = itemParams.parse(request.params);
+    const item = await prisma.itemLote.findFirst({
+      where: { id: itemId, loteId: id, lote: filtroVisivel(request) },
+      include: { matricula: { select: { historicoRef: true, aluno: { select: { nome: true } }, turma: { select: { nome: true } } } } },
+    });
+    if (!item) throw new HttpError(404, 'Aluno não encontrado neste lote');
+    if (!item.matricula.historicoRef) throw new HttpError(404, 'Histórico final não encontrado');
+
+    const stream = await abrirArquivo(item.matricula.historicoRef);
+    const nome = `historico-${slugificar(item.matricula.aluno.nome)}-${slugificar(item.matricula.turma.nome)}.pdf`;
+    return reply
+      .header('Content-Type', 'application/pdf')
+      .header('Content-Disposition', contentDisposition(nome))
+      .header('Cache-Control', 'private, no-store')
+      .send(stream);
+  });
+};

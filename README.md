@@ -101,6 +101,32 @@ node -e "console.log(require('crypto').randomBytes(48).toString('base64url'))"
   Gerar um novo link invalida o anterior. O aluno também pode pedir um link novo em `/portal/entrar` (CPF + e-mail).
 - A sessão do aluno só vale no portal; ela nunca dá acesso às telas da equipe.
 
+## Certificação (lotes mensais)
+
+- Em **Certificação**, a equipe cria o lote do mês com os alunos **aptos**: histórico final gerado (todos os módulos
+  aprovados e dados pessoais completos) e documentação aprovada. Quem concluiu os módulos mas ainda tem documento
+  pendente aparece separado, com o motivo.
+- **Enviar para a certificadora** congela o lote, começa a contar o prazo (`PRAZO_CERTIFICADORA_DIAS`, 30 dias),
+  avisa a certificadora por e-mail e, com o Google Drive configurado, monta a pasta
+  `Lote de certificação AAAA-MM / Aluno - CPF /` (histórico + documentos aprovados) com uma planilha-índice,
+  compartilhada com o e-mail de cada usuário certificadora.
+- A equipe é avisada quando faltam `ALERTA_PRAZO_DIAS` (5) dias para o prazo e quando ele vence.
+- **Perfil Certificadora** (crie em Usuários): acesso **somente** aos lotes já enviados. Ela baixa os históricos,
+  registra cada certificado (número e data) ou "todos os pendentes"; o lote se conclui sozinho e o aluno é avisado.
+
+## Avisos por e-mail
+
+Enviados automaticamente (e registrados na página do aluno): documento recusado (com o motivo), documentação
+completa, todos os módulos concluídos, certificado emitido, resposta à correção de dados, novo lote (para a
+certificadora), prazo do lote (para a equipe) e um **lembrete de pendências** a cada `LEMBRETE_PENDENCIAS_DIAS` (7).
+Sem SMTP configurado, os avisos ficam só registrados. `AVISOS_EMAIL=false` desliga todos.
+
+## Correção de dados pelo aluno
+
+No portal, em **Meus dados**: campos vazios (e o telefone) o aluno preenche direto; alterar um dado já preenchido
+vira uma solicitação que a secretaria aprova ou recusa em **Documentos** (ou na página do aluno). O CPF só a
+secretaria altera.
+
 ## Integrações opcionais
 
 Todas ficam em `apps/api/.env`. Reinicie a API depois de alterar. A tela inicial mostra o que está ativo.

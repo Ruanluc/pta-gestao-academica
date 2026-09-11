@@ -11,6 +11,8 @@ enum Role {
   ADMIN
   SECRETARIA
   PROFESSOR
+  // Acesso externo e limitado: só vê os lotes enviados e registra os certificados
+  CERTIFICADORA
 }
 
 enum CondicaoGraduacao {
@@ -55,6 +57,19 @@ enum StatusSincronizacao {
   ERRO
 }
 
+// ABERTO: montando | ENVIADO: com a certificadora (prazo correndo) | CONCLUIDO: todos os certificados registrados
+enum StatusLote {
+  ABERTO
+  ENVIADO
+  CONCLUIDO
+}
+
+enum StatusSolicitacao {
+  PENDENTE
+  APROVADA
+  RECUSADA
+}
+
 model Usuario {
   id           String   @id @default(uuid())
   nome         String
@@ -71,6 +86,9 @@ model Usuario {
   auditLogs            AuditLog[]
   magicLinks           MagicLink[]
   sincronizacoesCademi SincronizacaoCademi[]
+  lotesCriados         LoteCertificacao[]     @relation("LoteCriadoPor")
+  certificadosRegistrados ItemLote[]          @relation("CertificadoRegistradoPor")
+  solicitacoesAnalisadas SolicitacaoAlteracao[]
 }
 
 model Turma {
@@ -138,13 +156,17 @@ model Aluno {
   acessoExpiraEm    DateTime?
   // Cadastrado pelo próprio aluno no link de inscrição da turma
   inscricaoOnline   Boolean           @default(false)
+  // Último lembrete de pendências enviado por e-mail
+  ultimoLembreteEm  DateTime?
   statusSemaforo    StatusSemaforo    @default(VERMELHO)
   criadoEm          DateTime          @default(now())
   atualizadoEm      DateTime          @updatedAt
 
-  matriculas Matricula[]
-  documentos Documento[]
-  notas      Nota[]
+  matriculas   Matricula[]
+  documentos   Documento[]
+  notas        Nota[]
+  solicitacoes SolicitacaoAlteracao[]
+  notificacoes Notificacao[]
 }
 
 model Matricula {
@@ -161,8 +183,9 @@ model Matricula {
   historicoHash     String?
   historicoGeradoEm DateTime?
 
-  aluno Aluno @relation(fields: [alunoId], references: [id], onDelete: Cascade)
-  turma Turma @relation(fields: [turmaId], references: [id], onDelete: Cascade)
+  aluno    Aluno     @relation(fields: [alunoId], references: [id], onDelete: Cascade)
+  turma    Turma     @relation(fields: [turmaId], references: [id], onDelete: Cascade)
+  itemLote ItemLote?
 
   @@unique([alunoId, turmaId])
   @@index([turmaId])
@@ -261,4 +284,84 @@ model SincronizacaoCademi {
   usuario Usuario? @relation(fields: [usuarioId], references: [id], onDelete: SetNull)
 
   @@index([turmaId, iniciadoEm])
+}
+
+// Lote mensal enviado à certificadora
+model LoteCertificacao {
+  id            String     @id @default(uuid())
+  // Mês de referência, "AAAA-MM"
+  referencia    String
+  status        StatusLote @default(ABERTO)
+  enviadoEm     DateTime?
+  prazoEm       DateTime?
+  concluidoEm   DateTime?
+  // Pasta do lote no Google Drive (uma subpasta por aluno) e a planilha-índice
+  driveFolderId String?
+  driveIndiceId String?
+  criadoPorId   String?
+  criadoEm      DateTime   @default(now())
+  atualizadoEm  DateTime   @updatedAt
+
+  criadoPor Usuario?   @relation("LoteCriadoPor", fields: [criadoPorId], references: [id], onDelete: SetNull)
+  itens     ItemLote[]
+
+  @@index([status])
+}
+
+// Um aluno (matrícula) dentro de um lote; cada matrícula entra em um único lote
+model ItemLote {
+  id                   String    @id @default(uuid())
+  loteId               String
+  matriculaId          String    @unique
+  driveFolderId        String?
+  certificadoNumero    String?
+  certificadoEmitidoEm DateTime?
+  registradoPorId      String?
+  criadoEm             DateTime  @default(now())
+  atualizadoEm         DateTime  @updatedAt
+
+  lote          LoteCertificacao @relation(fields: [loteId], references: [id], onDelete: Cascade)
+  matricula     Matricula        @relation(fields: [matriculaId], references: [id], onDelete: Cascade)
+  registradoPor Usuario?         @relation("CertificadoRegistradoPor", fields: [registradoPorId], references: [id], onDelete: SetNull)
+
+  @@index([loteId])
+}
+
+// Pedido do aluno (portal) para alterar um dado já preenchido; a secretaria aprova ou recusa
+model SolicitacaoAlteracao {
+  id             String            @id @default(uuid())
+  alunoId        String
+  // JSON: { campo: { atual, novo } }
+  dados          String
+  status         StatusSolicitacao @default(PENDENTE)
+  motivoRecusa   String?
+  analisadoPorId String?
+  analisadoEm    DateTime?
+  criadoEm       DateTime          @default(now())
+  atualizadoEm   DateTime          @updatedAt
+
+  aluno        Aluno    @relation(fields: [alunoId], references: [id], onDelete: Cascade)
+  analisadoPor Usuario? @relation(fields: [analisadoPorId], references: [id], onDelete: SetNull)
+
+  @@index([alunoId, status])
+  @@index([status])
+}
+
+// Registro dos avisos enviados por e-mail
+model Notificacao {
+  id         String   @id @default(uuid())
+  alunoId    String?
+  para       String
+  tipo       String
+  // Evita repetir o mesmo aviso (ex.: um aviso de "certificado emitido" por matrícula)
+  referencia String?
+  assunto    String
+  enviado    Boolean
+  erro       String?
+  criadoEm   DateTime @default(now())
+
+  aluno Aluno? @relation(fields: [alunoId], references: [id], onDelete: SetNull)
+
+  @@index([alunoId, criadoEm])
+  @@index([tipo, referencia])
 }

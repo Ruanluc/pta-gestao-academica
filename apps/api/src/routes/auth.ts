@@ -3,7 +3,7 @@ import bcrypt from 'bcryptjs';
 import { z } from 'zod';
 import { config } from '../config';
 import { prisma } from '../lib/prisma';
-import { autenticar, createToken, usuarioLogado } from '../lib/auth';
+import { autenticar, createToken, QUALQUER_PERFIL, usuarioLogado } from '../lib/auth';
 import { registrarAuditoria } from '../lib/audit';
 import { HttpError } from '../lib/errors';
 import { consumirMagicLink, criarMagicLink, MINUTOS_VALIDADE_MAGIC_LINK } from '../lib/magicLink';
@@ -95,13 +95,13 @@ export const authRoutes: FastifyPluginAsync = async (app) => {
     return { token: createToken({ id: usuario.id, role: usuario.role }), usuario: usuarioPublico(usuario) };
   });
 
-  app.get('/me', { onRequest: autenticar() }, async (request) => {
+  app.get('/me', { onRequest: autenticar(QUALQUER_PERFIL) }, async (request) => {
     const usuario = await prisma.usuario.findUnique({ where: { id: usuarioLogado(request).id } });
     if (!usuario) throw new HttpError(404, 'Usuário não encontrado');
     return usuarioPublico(usuario);
   });
 
-  app.put('/senha', { onRequest: autenticar() }, async (request) => {
+  app.put('/senha', { onRequest: autenticar(QUALQUER_PERFIL) }, async (request) => {
     const { senhaAtual, novaSenha } = z
       .object({ senhaAtual: z.string().min(1, 'Informe a senha atual'), novaSenha: senhaSchema })
       .parse(request.body ?? {});

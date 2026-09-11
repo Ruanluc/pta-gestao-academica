@@ -4,6 +4,7 @@ import Link from 'next/link';
 import { usePathname, useRouter } from 'next/navigation';
 import { createContext, useCallback, useContext, useEffect, useState, type ReactNode } from 'react';
 import {
+  Award,
   BookOpen,
   ClipboardList,
   FileText,
@@ -50,6 +51,7 @@ const MENU: ItemMenu[] = [
   { href: '/alunos', rotulo: 'Alunos', icone: GraduationCap, perfis: TODOS },
   { href: '/notas', rotulo: 'Notas', icone: ClipboardList, perfis: TODOS },
   { href: '/documentos', rotulo: 'Documentos', icone: FileText, perfis: ['ADMIN', 'SECRETARIA'] },
+  { href: '/lotes', rotulo: 'Certificação', icone: Award, perfis: ['ADMIN', 'SECRETARIA', 'CERTIFICADORA'] },
   { href: '/usuarios', rotulo: 'Usuários', icone: Users, perfis: ['ADMIN'] },
   { href: '/auditoria', rotulo: 'Auditoria', icone: ScrollText, perfis: ['ADMIN'] },
 ];
@@ -103,6 +105,13 @@ export function AppShell({ children }: { children: ReactNode }) {
   useEffect(() => {
     setMenuAberto(false);
   }, [pathname]);
+
+  // A certificadora só usa a área de certificação (e a própria conta)
+  useEffect(() => {
+    if (!publica && usuario?.role === 'CERTIFICADORA' && !pathname.startsWith('/lotes') && pathname !== '/conta') {
+      router.replace('/lotes');
+    }
+  }, [publica, usuario, pathname, router]);
 
   if (publica) return <>{children}</>;
 

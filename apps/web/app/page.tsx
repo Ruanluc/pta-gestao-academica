@@ -7,6 +7,7 @@ import { api } from './lib/api';
 import { formatarNota } from './lib/formato';
 import { ROTULOS_SEMAFORO, type Dashboard, type StatusSemaforo } from './lib/tipos';
 import { useUsuario } from './components/AppShell';
+import { PrazoLote } from './components/Lotes';
 import { Aviso, Cabecalho, Carregando, Cartao, cls, useMensagem } from './components/ui';
 
 const CORES: Record<StatusSemaforo, string> = {
@@ -61,6 +62,38 @@ export default function InicioPage() {
               );
             })}
           </div>
+
+          {usuario.role !== 'PROFESSOR' ? (
+            <Cartao titulo="Certificação e análises">
+              <div className="grid gap-4 text-sm sm:grid-cols-3">
+                <Link href="/lotes" className="rounded-xl border border-slate-200 p-4 hover:bg-slate-50">
+                  <p className="text-slate-500">Lotes com a certificadora</p>
+                  <p className="mt-1 text-2xl font-semibold text-slate-900">{dados.certificacao.lotesComCertificadora}</p>
+                  <p className="text-xs text-slate-500">{dados.certificacao.lotesAbertos} em montagem</p>
+                </Link>
+                <Link
+                  href={dados.certificacao.proximoPrazo ? `/lotes/${dados.certificacao.proximoPrazo.id}` : '/lotes'}
+                  className="rounded-xl border border-slate-200 p-4 hover:bg-slate-50"
+                >
+                  <p className="text-slate-500">Próximo prazo da certificadora</p>
+                  {dados.certificacao.proximoPrazo ? (
+                    <>
+                      <p className="mt-1 font-semibold text-slate-900">Lote {dados.certificacao.proximoPrazo.referencia}</p>
+                      <PrazoLote status="ENVIADO" prazoEm={dados.certificacao.proximoPrazo.prazoEm} />
+                      <p className="text-xs text-slate-500">{dados.certificacao.proximoPrazo.pendentes} certificado(s) pendente(s)</p>
+                    </>
+                  ) : (
+                    <p className="mt-1 text-slate-400">Nenhum lote aguardando</p>
+                  )}
+                </Link>
+                <Link href="/documentos" className="rounded-xl border border-slate-200 p-4 hover:bg-slate-50">
+                  <p className="text-slate-500">Correções de dados</p>
+                  <p className="mt-1 text-2xl font-semibold text-slate-900">{dados.solicitacoesPendentes}</p>
+                  <p className="text-xs text-slate-500">aguardando análise</p>
+                </Link>
+              </div>
+            </Cartao>
+          ) : null}
 
           <div className="grid gap-6 lg:grid-cols-[1.5fr,1fr]">
             <Cartao titulo="Situação dos alunos" descricao="Clique em uma faixa para ver a lista de alunos.">

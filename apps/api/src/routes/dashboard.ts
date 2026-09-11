@@ -21,6 +21,17 @@ export const dashboardRoutes: FastifyPluginAsync = async (app) => {
       prisma.aluno.groupBy({ by: ['statusSemaforo'], _count: { _all: true } }),
     ]);
 
+    const [lotesAbertos, lotesComCertificadora, solicitacoesPendentes, proximoLote] = await Promise.all([
+      prisma.loteCertificacao.count({ where: { status: 'ABERTO' } }),
+      prisma.loteCertificacao.count({ where: { status: 'ENVIADO' } }),
+      prisma.solicitacaoAlteracao.count({ where: { status: 'PENDENTE' } }),
+      prisma.loteCertificacao.findFirst({
+        where: { status: 'ENVIADO', prazoEm: { not: null } },
+        orderBy: { prazoEm: 'asc' },
+        select: { id: true, referencia: true, prazoEm: true, itens: { where: { certificadoEmitidoEm: null }, select: { id: true } } },
+      }),
+    ]);
+
     const semaforo: Record<StatusSemaforo, number> = { VERDE: 0, AMARELO: 0, VERMELHO: 0 };
     for (const grupo of porStatus) semaforo[grupo.statusSemaforo] = grupo._count._all;
 
@@ -30,6 +41,14 @@ export const dashboardRoutes: FastifyPluginAsync = async (app) => {
       totalAlunos,
       documentosPendentes,
       semaforo,
+      solicitacoesPendentes,
+      certificacao: {
+        lotesAbertos,
+        lotesComCertificadora,
+        proximoPrazo: proximoLote
+          ? { id: proximoLote.id, referencia: proximoLote.referencia, prazoEm: proximoLote.prazoEm, pendentes: proximoLote.itens.length }
+          : null,
+      },
       regras: config.regras,
       integracoes: {
         armazenamento: armazenamentoAtual(),
