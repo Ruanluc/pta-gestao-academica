@@ -49,7 +49,7 @@ const notasOk = [
 ];
 
 test('documentos obrigatórios variam conforme a condição de graduação', () => {
-  assert.deepEqual(documentosObrigatorios('CURSANDO'), ['RG', 'CPF', 'COMPROVANTE_ENDERECO', 'DECLARACAO_MATRICULA']);
+  assert.deepEqual(documentosObrigatorios('CURSANDO'), ['RG', 'CPF', 'CERTIDAO_NASCIMENTO_CASAMENTO', 'COMPROVANTE_ENDERECO', 'DECLARACAO_MATRICULA']);
   assert.ok(documentosObrigatorios('CONCLUIDO_COM_DIPLOMA').includes('DIPLOMA'));
   assert.ok(documentosObrigatorios('CONCLUIDO_SEM_DIPLOMA').includes('DECLARACAO_CONCLUSAO'));
 });
@@ -62,7 +62,7 @@ test('sem documentos o aluno fica vermelho', () => {
 
 test('documento apenas rejeitado mantém vermelho', () => {
   const documentos = [
-    ...aprovados(['CPF', 'COMPROVANTE_ENDERECO', 'DECLARACAO_MATRICULA']),
+    ...aprovados(['CPF', 'CERTIDAO_NASCIMENTO_CASAMENTO', 'COMPROVANTE_ENDERECO', 'DECLARACAO_MATRICULA']),
     { tipo: 'RG', status: 'REJEITADO' },
   ];
   const resultado = calcularSemaforo({ condicaoGraduacao: 'CURSANDO', documentos, turmas: [], notas: [] }, regras);
@@ -71,7 +71,7 @@ test('documento apenas rejeitado mantém vermelho', () => {
 });
 
 test('documento aguardando análise deixa amarelo', () => {
-  const documentos = [...aprovados(['CPF', 'COMPROVANTE_ENDERECO', 'DECLARACAO_MATRICULA']), { tipo: 'RG', status: 'PENDENTE' }];
+  const documentos = [...aprovados(['CPF', 'CERTIDAO_NASCIMENTO_CASAMENTO', 'COMPROVANTE_ENDERECO', 'DECLARACAO_MATRICULA']), { tipo: 'RG', status: 'PENDENTE' }];
   const resultado = calcularSemaforo({ condicaoGraduacao: 'CURSANDO', documentos, turmas: [], notas: [] }, regras);
   assert.equal(resultado.status, 'AMARELO');
 });
@@ -101,7 +101,9 @@ test('documentação aprovada e todos os módulos aprovados deixa verde', () => 
 
 test('aprovação no módulo exige nota 70 ou mais (escala 0 a 100)', () => {
   assert.equal(situacaoDisciplina(undefined, regras), 'PENDENTE');
-  assert.equal(situacaoDisciplina({ media: 80, frequencia: null }, regras), 'PENDENTE');
+  // Curso EAD: sem frequência lançada, vale 100%
+  assert.equal(situacaoDisciplina({ media: 80, frequencia: null }, regras), 'APROVADO');
+  assert.equal(situacaoDisciplina({ media: null, frequencia: 100 }, regras), 'PENDENTE');
   assert.equal(situacaoDisciplina({ media: 70, frequencia: 75 }, regras), 'APROVADO');
   assert.equal(situacaoDisciplina({ media: 100, frequencia: 100 }, regras), 'APROVADO');
   assert.equal(situacaoDisciplina({ media: 69.9, frequencia: 100 }, regras), 'REPROVADO');

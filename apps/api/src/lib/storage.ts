@@ -28,6 +28,9 @@ export type EntradaArquivo = {
 
 const PREFIXO_DRIVE = 'drive:';
 const PREFIXO_LOCAL = 'local:';
+/** Documento conferido antes do sistema: não há arquivo aqui, só o link da pasta antiga no Drive */
+export const PREFIXO_EXTERNO = 'externo:';
+export const MIME_EXTERNO = 'text/uri-list';
 
 export const armazenamentoAtual = () => (envioAutomaticoDrive() ? 'google-drive' : 'local');
 
@@ -120,7 +123,18 @@ export const abrirArquivo = async (ref: string): Promise<Readable> => {
     return createReadStream(caminho);
   }
 
+  if (ref.startsWith(PREFIXO_EXTERNO)) {
+    throw new HttpError(409, 'Este documento foi conferido antes do sistema e está só na pasta antiga do Google Drive.');
+  }
+
   throw new HttpError(500, 'Referência de arquivo desconhecida');
+};
+
+/** Lê o arquivo inteiro para a memória (ex.: anexar a um e-mail). */
+export const lerArquivoCompleto = async (ref: string) => {
+  const partes: Buffer[] = [];
+  for await (const parte of await abrirArquivo(ref)) partes.push(Buffer.isBuffer(parte) ? parte : Buffer.from(parte));
+  return Buffer.concat(partes);
 };
 
 /** Remove um arquivo. Falhas são apenas logadas (o registro no banco é o que importa). */

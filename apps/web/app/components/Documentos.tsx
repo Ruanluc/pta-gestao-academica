@@ -5,7 +5,7 @@ import { useRef, useState, type FormEvent } from 'react';
 import { Check, CheckCircle2, Circle, Clock, ExternalLink, Eye, RotateCcw, Trash2, Upload, X, XCircle } from 'lucide-react';
 import { abrirArquivo, api, apiUpload } from '../lib/api';
 import { formatarDataHora, formatarTamanho } from '../lib/formato';
-import { ROTULOS_DOCUMENTO, type Documento, type StatusDocumento, type TipoDocumento } from '../lib/tipos';
+import { MIME_EXTERNO, ROTULOS_DOCUMENTO, type Documento, type StatusDocumento, type TipoDocumento } from '../lib/tipos';
 import { Aviso, Campo, StatusDocumentoBadge, useMensagem, Vazio } from './ui';
 
 export function ListaDocumentos({
@@ -78,8 +78,16 @@ export function ListaDocumentos({
                 </Link>
               ) : null}
               <p className="mt-1 truncate text-xs text-slate-500">
-                {documento.nomeArquivo} · {formatarTamanho(documento.tamanho)} · enviado em {formatarDataHora(documento.criadoEm)}
-                {documento.enviadoPor ? ` por ${documento.enviadoPor.nome}` : ''}
+                {documento.mimeType === MIME_EXTERNO ? (
+                  <>
+                    {documento.nomeArquivo} em {formatarDataHora(documento.analisadoEm ?? documento.criadoEm)} · o arquivo está na pasta antiga do Drive
+                  </>
+                ) : (
+                  <>
+                    {documento.nomeArquivo} · {formatarTamanho(documento.tamanho)} · enviado em {formatarDataHora(documento.criadoEm)}
+                    {documento.enviadoPor ? ` por ${documento.enviadoPor.nome}` : ''}
+                  </>
+                )}
               </p>
               {documento.analisadoPor && documento.status !== 'PENDENTE' ? (
                 <p className="text-xs text-slate-500">
@@ -92,12 +100,14 @@ export function ListaDocumentos({
             </div>
 
             <div className="flex flex-wrap gap-1.5">
-              <button type="button" onClick={() => void abrir(documento)} className="btn btn-secundario btn-sm">
-                <Eye className="h-3.5 w-3.5" /> Abrir
-              </button>
+              {documento.mimeType === MIME_EXTERNO ? null : (
+                <button type="button" onClick={() => void abrir(documento)} className="btn btn-secundario btn-sm">
+                  <Eye className="h-3.5 w-3.5" /> Abrir
+                </button>
+              )}
               {documento.driveLink ? (
                 <a href={documento.driveLink} target="_blank" rel="noreferrer" className="btn btn-secundario btn-sm">
-                  <ExternalLink className="h-3.5 w-3.5" /> Drive
+                  <ExternalLink className="h-3.5 w-3.5" /> {documento.mimeType === MIME_EXTERNO ? 'Pasta antiga' : 'Drive'}
                 </a>
               ) : null}
               {documento.status !== 'APROVADO' ? (

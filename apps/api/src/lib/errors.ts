@@ -17,6 +17,7 @@ const NOMES_CAMPOS: Record<string, string> = {
   cpf: 'CPF',
   email: 'e-mail',
   cademiId: 'ID da Cademi',
+  codigo: 'código de turma',
 };
 
 const mensagemDuplicidade = (alvo: unknown) => {

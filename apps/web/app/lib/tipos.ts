@@ -1,4 +1,5 @@
-export type Role = 'ADMIN' | 'SECRETARIA' | 'PROFESSOR' | 'CERTIFICADORA';
+export type Role = 'ADMIN' | 'SECRETARIA' | 'PROFESSOR' | 'CERTIFICADORA' | 'FINANCEIRO';
+export type SituacaoMatricula = 'EM_DIA' | 'TRIAL' | 'ATRASADO' | 'SUSPENSO' | 'CANCELADO' | 'QUITADO' | 'FINALIZADO';
 export type StatusSemaforo = 'VERDE' | 'AMARELO' | 'VERMELHO';
 export type CondicaoGraduacao = 'CURSANDO' | 'CONCLUIDO_SEM_DIPLOMA' | 'CONCLUIDO_COM_DIPLOMA';
 export type TipoDocumento =
@@ -9,6 +10,7 @@ export type TipoDocumento =
   | 'DIPLOMA'
   | 'DECLARACAO_CONCLUSAO'
   | 'DECLARACAO_MATRICULA'
+  | 'CERTIDAO_NASCIMENTO_CASAMENTO'
   | 'OUTRO';
 export type StatusDocumento = 'PENDENTE' | 'APROVADO' | 'REJEITADO';
 export type SituacaoDisciplina = 'APROVADO' | 'REPROVADO' | 'PENDENTE';
@@ -19,6 +21,7 @@ export type Usuario = { id: string; nome: string; email: string; role: Role; ati
 
 export type Turma = {
   id: string;
+  codigo: string | null;
   nome: string;
   curso: string | null;
   resolucaoMec: string | null;
@@ -53,6 +56,16 @@ export type Aluno = AlunoResumo & {
   rgNumero: string | null;
   rgOrgaoEmissor: string | null;
   condicaoGraduacao: CondicaoGraduacao;
+  enderecoRua: string | null;
+  enderecoNumero: string | null;
+  enderecoComplemento: string | null;
+  enderecoBairro: string | null;
+  enderecoCep: string | null;
+  enderecoCidade: string | null;
+  enderecoEstado: string | null;
+  grupoWhatsapp: boolean | null;
+  ganhouCamiseta: boolean | null;
+  importadoEm: string | null;
   driveFolderId: string | null;
   cademiId: string | null;
   inscricaoOnline: boolean;
@@ -67,6 +80,12 @@ export type Matricula = {
   alunoId: string;
   turmaId: string;
   dataInclusao: string;
+  numeroMatricula: string | null;
+  situacao: SituacaoMatricula;
+  situacaoAtualizadaEm: string | null;
+  dataCancelamento: string | null;
+  entrouPorMigracao: boolean;
+  saiuPorMigracao: boolean;
   historicoLink: string | null;
   historicoGeradoEm: string | null;
   historicoDriveFileId: string | null;
@@ -186,6 +205,7 @@ export type LoteResumo = {
   prazoEm: string | null;
   concluidoEm: string | null;
   criadoEm: string;
+  importado: boolean;
   totalAlunos: number;
   certificadosEmitidos: number;
 };
@@ -196,6 +216,10 @@ export type ItemLote = {
   driveFolderId: string | null;
   certificadoNumero: string | null;
   certificadoEmitidoEm: string | null;
+  /** O PDF do certificado digital foi anexado */
+  temCertificado: boolean;
+  certificadoEnviadoEm: string | null;
+  certificadoCanal: 'email' | 'manual' | null;
   registradoPor: { nome: string } | null;
   matricula: {
     id: string;
@@ -209,6 +233,7 @@ export type LoteDetalhe = Omit<LoteResumo, 'totalAlunos' | 'certificadosEmitidos
   driveFolderId: string | null;
   pastaLink: string | null;
   driveConfigurado: boolean;
+  emailConfigurado: boolean;
   prazoDias: number;
   criadoPor: { nome: string } | null;
   itens: ItemLote[];
@@ -288,10 +313,34 @@ export const ROTULOS_STATUS_LOTE: Record<StatusLote, string> = {
 
 export const ROTULOS_ROLE: Record<Role, string> = {
   ADMIN: 'Administrador',
-  SECRETARIA: 'Secretaria',
+  SECRETARIA: 'Equipe CS',
   PROFESSOR: 'Professor',
   CERTIFICADORA: 'Certificadora',
+  FINANCEIRO: 'Financeiro',
 };
+
+export const ROTULOS_SITUACAO_MATRICULA: Record<SituacaoMatricula, string> = {
+  EM_DIA: 'Em dia',
+  TRIAL: 'Trial',
+  ATRASADO: 'Atrasado',
+  SUSPENSO: 'Suspenso',
+  CANCELADO: 'Cancelado',
+  QUITADO: 'Quitado',
+  FINALIZADO: 'Finalizado',
+};
+
+export const CORES_SITUACAO_MATRICULA: Record<SituacaoMatricula, string> = {
+  EM_DIA: 'border-emerald-200 bg-emerald-50 text-emerald-700',
+  QUITADO: 'border-emerald-200 bg-emerald-50 text-emerald-700',
+  FINALIZADO: 'border-slate-200 bg-slate-50 text-slate-700',
+  TRIAL: 'border-sky-200 bg-sky-50 text-sky-700',
+  ATRASADO: 'border-amber-200 bg-amber-50 text-amber-700',
+  SUSPENSO: 'border-amber-200 bg-amber-50 text-amber-800',
+  CANCELADO: 'border-rose-200 bg-rose-50 text-rose-700',
+};
+
+/** Documento conferido antes do sistema: não há arquivo, só o link da pasta antiga no Drive */
+export const MIME_EXTERNO = 'text/uri-list';
 
 export const ROTULOS_SEMAFORO: Record<StatusSemaforo, string> = {
   VERDE: 'Tudo certo',
@@ -313,6 +362,7 @@ export const ROTULOS_DOCUMENTO: Record<TipoDocumento, string> = {
   DIPLOMA: 'Diploma da graduação',
   DECLARACAO_CONCLUSAO: 'Declaração de conclusão da graduação',
   DECLARACAO_MATRICULA: 'Declaração de matrícula na graduação',
+  CERTIDAO_NASCIMENTO_CASAMENTO: 'Certidão de nascimento ou casamento',
   OUTRO: 'Outro',
 };
 
@@ -332,8 +382,8 @@ export const situacaoDisciplina = (
   nota: { media: number | null; frequencia: number | null } | undefined,
   regras: Regras,
 ): SituacaoDisciplina => {
-  if (!nota || nota.media === null || nota.frequencia === null || Number.isNaN(nota.media) || Number.isNaN(nota.frequencia)) {
-    return 'PENDENTE';
-  }
-  return nota.media >= regras.mediaMinima && nota.frequencia >= regras.frequenciaMinima ? 'APROVADO' : 'REPROVADO';
+  if (!nota || nota.media === null || Number.isNaN(nota.media)) return 'PENDENTE';
+  // Curso EAD: sem frequência lançada, vale 100%
+  const frequencia = nota.frequencia === null || Number.isNaN(nota.frequencia) ? 100 : nota.frequencia;
+  return nota.media >= regras.mediaMinima && frequencia >= regras.frequenciaMinima ? 'APROVADO' : 'REPROVADO';
 };

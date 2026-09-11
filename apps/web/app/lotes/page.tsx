@@ -91,6 +91,7 @@ export default function LotesPage() {
                       <Link href={`/lotes/${lote.id}`} className="link">
                         {lote.referencia}
                       </Link>
+                      {lote.importado ? <span className="ml-2 rounded-full bg-slate-100 px-2 py-0.5 text-xs text-slate-600">planilha antiga</span> : null}
                     </td>
                     <td>
                       <StatusLoteBadge status={lote.status} />

@@ -20,6 +20,7 @@ import { publicoRoutes } from './routes/publico';
 import { portalRoutes } from './routes/portal';
 import { loteRoutes } from './routes/lotes';
 import { solicitacaoRoutes } from './routes/solicitacoes';
+import { financeiroRoutes } from './routes/financeiro';
 
 export const buildApp = async (opcoes: FastifyServerOptions = {}) => {
   const app = Fastify({
@@ -65,6 +66,7 @@ export const buildApp = async (opcoes: FastifyServerOptions = {}) => {
   await app.register(portalRoutes, { prefix: '/portal' });
   await app.register(loteRoutes, { prefix: '/lotes' });
   await app.register(solicitacaoRoutes, { prefix: '/solicitacoes' });
+  await app.register(financeiroRoutes, { prefix: '/financeiro' });
 
   return app;
 };

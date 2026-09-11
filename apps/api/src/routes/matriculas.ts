@@ -7,7 +7,7 @@ import { HttpError } from '../lib/errors';
 import { gerarPdfHistorico } from '../lib/historico';
 import { contentDisposition, slugificar } from '../lib/http';
 import { abrirArquivo, removerArquivo } from '../lib/storage';
-import { idParams, idSchema } from '../lib/validation';
+import { booleano, dataOpcional, idParams, idSchema, textoOpcional } from '../lib/validation';
 import { montarDadosHistorico, sincronizarAluno } from '../services/academico';
 
 const SELECAO_ALUNO = { id: true, nome: true, cpf: true, email: true, statusSemaforo: true } as const;
@@ -56,6 +56,28 @@ export const matriculaRoutes: FastifyPluginAsync = async (app) => {
 
     await sincronizarAluno(alunoId);
     return reply.code(201).send(matricula);
+  });
+
+  /** Nº de matrícula, data de entrada e migração de turma. A situação é do financeiro (/financeiro). */
+  app.patch('/:id', { preHandler: exigirPerfil(EQUIPE) }, async (request) => {
+    const { id } = idParams.parse(request.params);
+    const dados = z
+      .object({
+        numeroMatricula: textoOpcional(30),
+        dataInclusao: dataOpcional,
+        entrouPorMigracao: booleano.optional(),
+        saiuPorMigracao: booleano.optional(),
+      })
+      .parse(request.body ?? {});
+
+    const matricula = await prisma.matricula.update({
+      where: { id },
+      data: { ...dados, dataInclusao: dados.dataInclusao ?? undefined },
+      include: { aluno: { select: SELECAO_ALUNO }, turma: { select: SELECAO_TURMA } },
+    });
+
+    await registrarAuditoria({ usuarioId: usuarioLogado(request).id, acao: 'ATUALIZAR', entidade: 'Matricula', entidadeId: id, detalhes: dados });
+    return matricula;
   });
 
   /** Remove a matrícula e as notas do aluno nas disciplinas desta turma. */

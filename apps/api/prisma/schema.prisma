@@ -13,6 +13,19 @@ enum Role {
   PROFESSOR
   // Acesso externo e limitado: só vê os lotes enviados e registra os certificados
   CERTIFICADORA
+  // Só mantém a situação (financeira) das matrículas
+  FINANCEIRO
+}
+
+// Mantida à mão pelo financeiro (a Eduzz não tem API). Só CANCELADO fica fora dos lotes de certificação.
+enum SituacaoMatricula {
+  EM_DIA
+  TRIAL
+  ATRASADO
+  SUSPENSO
+  CANCELADO
+  QUITADO
+  FINALIZADO
 }
 
 enum CondicaoGraduacao {
@@ -29,6 +42,7 @@ enum TipoDocumento {
   DIPLOMA
   DECLARACAO_CONCLUSAO
   DECLARACAO_MATRICULA
+  CERTIDAO_NASCIMENTO_CASAMENTO
   OUTRO
 }
 
@@ -93,6 +107,8 @@ model Usuario {
 
 model Turma {
   id           String   @id @default(uuid())
+  // Sigla da turma (ex.: "B7", "TF4"), a mesma das abas da planilha antiga
+  codigo       String?  @unique
   // Nome da turma, como sai em "Pós-Graduado no curso de:" (ex.: "Biomecânica... - B7")
   nome         String
   // Nome do curso no título do histórico (ex.: "Biomecânica..."). Vazio = usa o nome da turma
@@ -147,6 +163,17 @@ model Aluno {
   rgNumero          String?
   rgOrgaoEmissor    String?
   condicaoGraduacao CondicaoGraduacao @default(CURSANDO)
+  enderecoRua         String?
+  enderecoNumero      String?
+  enderecoComplemento String?
+  enderecoBairro      String?
+  enderecoCep         String?
+  enderecoCidade      String?
+  enderecoEstado      String?
+  grupoWhatsapp       Boolean?
+  ganhouCamiseta      Boolean?
+  // Veio da importação da planilha antiga
+  importadoEm         DateTime?
   driveFolderId     String?
   driveExportadoEm  DateTime?
   // ID do aluno na Cademi: preenchido na primeira importação (casando por CPF/e-mail) ou manualmente
@@ -173,7 +200,16 @@ model Matricula {
   id                String    @id @default(uuid())
   alunoId           String
   turmaId           String
+  // Data de entrada do aluno na turma
   dataInclusao      DateTime  @default(now())
+  // Número de matrícula (virá da Cademi; os antigos vêm da planilha)
+  numeroMatricula   String?
+  situacao          SituacaoMatricula @default(EM_DIA)
+  situacaoAtualizadaEm DateTime?
+  dataCancelamento  DateTime?
+  // Troca de turma: as notas não passam, o aluno refaz as avaliações da turma nova
+  entrouPorMigracao Boolean   @default(false)
+  saiuPorMigracao   Boolean   @default(false)
   // Referência do PDF final do histórico ("local:<caminho>" ou "drive:<fileId>")
   historicoRef      String?
   historicoLink     String?
@@ -189,6 +225,8 @@ model Matricula {
 
   @@unique([alunoId, turmaId])
   @@index([turmaId])
+  @@index([situacao])
+  @@index([numeroMatricula])
 }
 
 model Documento {
@@ -198,7 +236,8 @@ model Documento {
   nomeArquivo    String
   mimeType       String
   tamanho        Int
-  // Referência do arquivo ("local:<caminho>" ou "drive:<fileId>")
+  // Referência do arquivo ("local:<caminho>", "drive:<fileId>" ou "externo:<link>" para os documentos
+  // conferidos antes do sistema, que continuam só na pasta antiga do Drive)
   arquivoRef     String
   // Cópia exportada para o Google Drive (exportação manual da pasta do aluno)
   driveFileId    String?
@@ -219,7 +258,7 @@ model Documento {
   @@index([status])
 }
 
-// Nota de 0 a 10 e frequência de 0 a 100 (%), uma por aluno/disciplina.
+// Nota de 0 a 100, uma por aluno/disciplina. Curso EAD: a frequência é sempre 100% (vazio conta como 100).
 model Nota {
   id           String   @id @default(uuid())
   alunoId      String
@@ -298,6 +337,8 @@ model LoteCertificacao {
   // Pasta do lote no Google Drive (uma subpasta por aluno) e a planilha-índice
   driveFolderId String?
   driveIndiceId String?
+  // Reconstruído a partir da planilha antiga: não gera alertas de prazo
+  importado     Boolean    @default(false)
   criadoPorId   String?
   criadoEm      DateTime   @default(now())
   atualizadoEm  DateTime   @updatedAt
@@ -316,6 +357,12 @@ model ItemLote {
   driveFolderId        String?
   certificadoNumero    String?
   certificadoEmitidoEm DateTime?
+  // Certificado digital (PDF) guardado na pasta do aluno e entregue a ele
+  certificadoRef       String?
+  certificadoNomeArquivo String?
+  certificadoEnviadoEm DateTime?
+  // "email" (enviado pelo sistema) ou "manual" (registrado pela equipe)
+  certificadoCanal     String?
   registradoPorId      String?
   criadoEm             DateTime  @default(now())
   atualizadoEm         DateTime  @updatedAt

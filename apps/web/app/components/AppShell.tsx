@@ -16,6 +16,7 @@ import {
   ScrollText,
   ShieldAlert,
   Users,
+  Wallet,
   X,
   type LucideIcon,
 } from 'lucide-react';
@@ -52,6 +53,7 @@ const MENU: ItemMenu[] = [
   { href: '/notas', rotulo: 'Notas', icone: ClipboardList, perfis: TODOS },
   { href: '/documentos', rotulo: 'Documentos', icone: FileText, perfis: ['ADMIN', 'SECRETARIA'] },
   { href: '/lotes', rotulo: 'Certificação', icone: Award, perfis: ['ADMIN', 'SECRETARIA', 'CERTIFICADORA'] },
+  { href: '/financeiro', rotulo: 'Financeiro', icone: Wallet, perfis: ['ADMIN', 'FINANCEIRO'] },
   { href: '/usuarios', rotulo: 'Usuários', icone: Users, perfis: ['ADMIN'] },
   { href: '/auditoria', rotulo: 'Auditoria', icone: ScrollText, perfis: ['ADMIN'] },
 ];
@@ -106,10 +108,11 @@ export function AppShell({ children }: { children: ReactNode }) {
     setMenuAberto(false);
   }, [pathname]);
 
-  // A certificadora só usa a área de certificação (e a própria conta)
+  // A certificadora só usa a área de certificação e o financeiro só a de situação das matrículas (e a própria conta)
   useEffect(() => {
-    if (!publica && usuario?.role === 'CERTIFICADORA' && !pathname.startsWith('/lotes') && pathname !== '/conta') {
-      router.replace('/lotes');
+    const areaRestrita = usuario?.role === 'CERTIFICADORA' ? '/lotes' : usuario?.role === 'FINANCEIRO' ? '/financeiro' : null;
+    if (!publica && areaRestrita && !pathname.startsWith(areaRestrita) && pathname !== '/conta') {
+      router.replace(areaRestrita);
     }
   }, [publica, usuario, pathname, router]);
 

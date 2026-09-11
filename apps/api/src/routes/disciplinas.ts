@@ -2,7 +2,7 @@ import type { FastifyPluginAsync } from 'fastify';
 import { z } from 'zod';
 import { config } from '../config';
 import { prisma } from '../lib/prisma';
-import { autenticar, EQUIPE, exigirPerfil, usuarioLogado } from '../lib/auth';
+import { autenticar, exigirPerfil, SO_ADMIN, usuarioLogado } from '../lib/auth';
 import { registrarAuditoria } from '../lib/audit';
 import { HttpError } from '../lib/errors';
 import { idParams, idSchema, textoObrigatorio, textoOpcional } from '../lib/validation';
@@ -46,7 +46,7 @@ export const disciplinaRoutes: FastifyPluginAsync = async (app) => {
     return prisma.disciplina.findMany({ where: { turmaId }, orderBy: [{ turmaId: 'asc' }, { ordem: 'asc' }] });
   });
 
-  app.post('/', { preHandler: exigirPerfil(EQUIPE) }, async (request, reply) => {
+  app.post('/', { preHandler: exigirPerfil(SO_ADMIN) }, async (request, reply) => {
     const dados = criarSchema.parse(request.body ?? {});
 
     const turma = await prisma.turma.findUnique({ where: { id: dados.turmaId }, select: { id: true } });
@@ -78,7 +78,7 @@ export const disciplinaRoutes: FastifyPluginAsync = async (app) => {
     return reply.code(201).send(disciplina);
   });
 
-  app.put('/:id', { preHandler: exigirPerfil(EQUIPE) }, async (request) => {
+  app.put('/:id', { preHandler: exigirPerfil(SO_ADMIN) }, async (request) => {
     const { id } = idParams.parse(request.params);
     const dados = atualizarSchema.parse(request.body ?? {});
     const disciplina = await prisma.disciplina.update({ where: { id }, data: dados });
@@ -94,7 +94,7 @@ export const disciplinaRoutes: FastifyPluginAsync = async (app) => {
     return disciplina;
   });
 
-  app.post('/reordenar', { preHandler: exigirPerfil(EQUIPE) }, async (request) => {
+  app.post('/reordenar', { preHandler: exigirPerfil(SO_ADMIN) }, async (request) => {
     const { turmaId, ids } = z
       .object({ turmaId: idSchema, ids: z.array(idSchema).min(1).max(200) })
       .parse(request.body ?? {});
@@ -111,7 +111,7 @@ export const disciplinaRoutes: FastifyPluginAsync = async (app) => {
     return prisma.disciplina.findMany({ where: { turmaId }, orderBy: { ordem: 'asc' } });
   });
 
-  app.delete('/:id', { preHandler: exigirPerfil(EQUIPE) }, async (request, reply) => {
+  app.delete('/:id', { preHandler: exigirPerfil(SO_ADMIN) }, async (request, reply) => {
     const { id } = idParams.parse(request.params);
 
     const notasLancadas = await prisma.nota.count({

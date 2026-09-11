@@ -19,7 +19,29 @@ export type FormAluno = {
   rgOrgaoEmissor: string;
   condicaoGraduacao: CondicaoGraduacao;
   cademiId: string;
+  enderecoRua: string;
+  enderecoNumero: string;
+  enderecoComplemento: string;
+  enderecoBairro: string;
+  enderecoCep: string;
+  enderecoCidade: string;
+  enderecoEstado: string;
+  /** '' = não informado */
+  grupoWhatsapp: '' | 'true' | 'false';
+  ganhouCamiseta: '' | 'true' | 'false';
 };
+
+const CAMPOS_ENDERECO: Array<{ nome: keyof FormAluno; rotulo: string; classe?: string }> = [
+  { nome: 'enderecoRua', rotulo: 'Rua', classe: 'md:col-span-2' },
+  { nome: 'enderecoNumero', rotulo: 'Número' },
+  { nome: 'enderecoComplemento', rotulo: 'Complemento' },
+  { nome: 'enderecoBairro', rotulo: 'Bairro' },
+  { nome: 'enderecoCep', rotulo: 'CEP' },
+  { nome: 'enderecoCidade', rotulo: 'Cidade' },
+  { nome: 'enderecoEstado', rotulo: 'Estado (UF)' },
+];
+
+const simNaoForm = (valor: boolean | null | undefined): FormAluno['grupoWhatsapp'] => (valor === null || valor === undefined ? '' : valor ? 'true' : 'false');
 
 const FORM_VAZIO: FormAluno = {
   nome: '',
@@ -34,6 +56,15 @@ const FORM_VAZIO: FormAluno = {
   rgOrgaoEmissor: '',
   condicaoGraduacao: 'CURSANDO',
   cademiId: '',
+  enderecoRua: '',
+  enderecoNumero: '',
+  enderecoComplemento: '',
+  enderecoBairro: '',
+  enderecoCep: '',
+  enderecoCidade: '',
+  enderecoEstado: '',
+  grupoWhatsapp: '',
+  ganhouCamiseta: '',
 };
 
 const paraForm = (aluno: Aluno): FormAluno => ({
@@ -49,6 +80,15 @@ const paraForm = (aluno: Aluno): FormAluno => ({
   rgOrgaoEmissor: aluno.rgOrgaoEmissor ?? '',
   condicaoGraduacao: aluno.condicaoGraduacao,
   cademiId: aluno.cademiId ?? '',
+  enderecoRua: aluno.enderecoRua ?? '',
+  enderecoNumero: aluno.enderecoNumero ?? '',
+  enderecoComplemento: aluno.enderecoComplemento ?? '',
+  enderecoBairro: aluno.enderecoBairro ?? '',
+  enderecoCep: aluno.enderecoCep ?? '',
+  enderecoCidade: aluno.enderecoCidade ?? '',
+  enderecoEstado: aluno.enderecoEstado ?? '',
+  grupoWhatsapp: simNaoForm(aluno.grupoWhatsapp),
+  ganhouCamiseta: simNaoForm(aluno.ganhouCamiseta),
 });
 
 export function AlunoForm({
@@ -147,9 +187,31 @@ export function AlunoForm({
           <input name="rgOrgaoEmissor" value={form.rgOrgaoEmissor} onChange={alterar} placeholder="SSP/UF" required={exigirDadosHistorico} className="input" />
         </Campo>
         {camposInternos ? (
-          <Campo rotulo="ID na Cademi" dica="Opcional. Se vazio, é preenchido na primeira importação de notas (pelo CPF ou e-mail).">
-            <input name="cademiId" value={form.cademiId} onChange={alterar} className="input" />
-          </Campo>
+          <>
+            <Campo rotulo="ID na Cademi" dica="Opcional. Se vazio, é preenchido na primeira importação de notas (pelo CPF ou e-mail).">
+              <input name="cademiId" value={form.cademiId} onChange={alterar} className="input" />
+            </Campo>
+            <p className="pt-2 text-sm font-semibold text-slate-800 md:col-span-2">Endereço e relacionamento</p>
+            {CAMPOS_ENDERECO.map((campo) => (
+              <Campo key={campo.nome} rotulo={campo.rotulo} className={campo.classe}>
+                <input name={campo.nome} value={form[campo.nome]} onChange={alterar} className="input" />
+              </Campo>
+            ))}
+            <Campo rotulo="Está no grupo do WhatsApp?">
+              <select name="grupoWhatsapp" value={form.grupoWhatsapp} onChange={alterar} className="input">
+                <option value="">Não informado</option>
+                <option value="true">Sim</option>
+                <option value="false">Não</option>
+              </select>
+            </Campo>
+            <Campo rotulo="Ganhou camiseta?">
+              <select name="ganhouCamiseta" value={form.ganhouCamiseta} onChange={alterar} className="input">
+                <option value="">Não informado</option>
+                <option value="true">Sim</option>
+                <option value="false">Não</option>
+              </select>
+            </Campo>
+          </>
         ) : null}
       </div>
       <div className="mt-5 flex flex-wrap gap-2">

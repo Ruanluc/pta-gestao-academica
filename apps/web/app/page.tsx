@@ -154,8 +154,7 @@ export default function InicioPage() {
                 <div className="flex justify-between gap-4">
                   <dt className="text-slate-500">Aprovação no módulo</dt>
                   <dd className="text-right font-medium text-slate-900">
-                    nota ≥ {formatarNota(dados.regras.mediaMinima)} (0 a 100)
-                    {dados.regras.frequenciaMinima > 0 ? ` e frequência ≥ ${dados.regras.frequenciaMinima}%` : ''}
+                    nota ≥ {formatarNota(dados.regras.mediaMinima)} (0 a 100) · frequência 100% (EAD)
                   </dd>
                 </div>
               </dl>

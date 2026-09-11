@@ -51,29 +51,37 @@ node -e "console.log(require('crypto').randomBytes(48).toString('base64url'))"
 | `npm test` | Compila a API e roda os testes |
 | `npm run db:migrate` | Aplica as migrações pendentes (`prisma migrate deploy`) |
 | `npm run db:seed` | Cria o administrador definido em `ADMIN_EMAIL`/`ADMIN_SENHA` |
+| `npm run importar:planilha -w apps/api -- "<planilha.xlsx>" [--aplicar]` | Importa a planilha antiga (sem `--aplicar` só simula) |
 | `npm --workspace apps/api run db:migrate:dev -- --name <nome>` | Cria uma nova migração após alterar o `schema.prisma` |
 
 ## Perfis de acesso
 
 | Perfil | Pode |
 | --- | --- |
-| **Administrador** | Tudo, inclusive usuários, auditoria e exclusões definitivas |
-| **Secretaria** | Turmas, disciplinas, alunos, matrículas, documentos e notas |
+| **Administrador** | Tudo: configurar turmas e módulos, usuários, auditoria, exclusões definitivas e situação das matrículas |
+| **Equipe CS** | Alunos, matrículas, documentos, notas e certificação (não cria/edita turmas e módulos nem usuários) |
 | **Professor** | Consultar turmas e alunos (sem documentos pessoais) e lançar notas |
+| **Certificadora** | Só os lotes já enviados: baixa os históricos e registra/anexa os certificados |
+| **Financeiro** | Só a tela **Financeiro**: situação de cada matrícula (Em dia, Atrasado, Cancelado...) |
 
 ## Regras acadêmicas
 
 - Cada turma tem **`MODULOS_POR_TURMA` módulos** (18), que variam de turma para turma. Não é possível cadastrar mais que isso.
-- Cada módulo tem uma **avaliação individual de 0 a 100**. O aluno é aprovado no módulo com nota ≥ `MEDIA_MINIMA` (70)
-  e frequência ≥ `FREQUENCIA_MINIMA` (75%, exigência da Resolução CNE/CES nº 1/2018; use 0 para não exigir).
+- Cada módulo tem uma **avaliação individual de 0 a 100**. O aluno é aprovado no módulo com nota ≥ `MEDIA_MINIMA` (70).
+  Curso EAD: a **frequência é sempre 100%** (não se lança; sai 100% no histórico).
+- O **período** do curso é o da turma (18 meses, igual para todos os alunos); a data de entrada de cada aluno fica
+  registrada na matrícula.
+- **Situação da matrícula** (Em dia, Trial, Atrasado, Suspenso, Cancelado, Quitado, Finalizado): mantida à mão pelo
+  financeiro, porque a Eduzz não tem API. Só **Cancelado** fica fora dos lotes de certificação.
+- **Troca de turma (migração)**: é uma matrícula nova; as notas não passam, porque os módulos mudam de uma turma para outra.
 - O curso só é concluído quando a turma tem todos os módulos cadastrados e o aluno foi aprovado em cada um deles.
-- **Documentos exigidos**: RG, CPF e comprovante de endereço, mais:
+- **Documentos exigidos**: RG, CPF, certidão de nascimento ou casamento e comprovante de endereço, mais:
   - cursando a graduação → declaração de matrícula;
   - graduação concluída sem diploma → declaração de conclusão + histórico da graduação;
   - graduação concluída com diploma → diploma + histórico da graduação.
 - **Semáforo do aluno** (recalculado automaticamente):
   - 🔴 **Falta documentação** — algum documento exigido não foi enviado ou foi rejeitado;
-  - 🟡 **Falta avaliação** — documento aguardando análise, disciplina sem nota/frequência ou reprovação;
+  - 🟡 **Falta avaliação** — documento aguardando análise, módulo sem nota ou reprovação;
   - 🟢 **Tudo certo**.
 - **Histórico escolar** no **modelo da certificadora** (A4 paisagem): cabeçalho com os dados do aluno, título
   "HISTÓRICO ESCOLAR DO CURSO DE ESPECIALIZAÇÃO EM: <curso>" com a resolução, e a tabela
@@ -104,15 +112,18 @@ node -e "console.log(require('crypto').randomBytes(48).toString('base64url'))"
 ## Certificação (lotes mensais)
 
 - Em **Certificação**, a equipe cria o lote do mês com os alunos **aptos**: histórico final gerado (todos os módulos
-  aprovados e dados pessoais completos) e documentação aprovada. Quem concluiu os módulos mas ainda tem documento
-  pendente aparece separado, com o motivo.
+  aprovados e dados pessoais completos), documentação aprovada e matrícula não cancelada. Quem concluiu os módulos
+  mas ainda tem pendência aparece separado, com o motivo.
 - **Enviar para a certificadora** congela o lote, começa a contar o prazo (`PRAZO_CERTIFICADORA_DIAS`, 30 dias),
   avisa a certificadora por e-mail e, com o Google Drive configurado, monta a pasta
   `Lote de certificação AAAA-MM / Aluno - CPF /` (histórico + documentos aprovados) com uma planilha-índice,
   compartilhada com o e-mail de cada usuário certificadora.
 - A equipe é avisada quando faltam `ALERTA_PRAZO_DIAS` (5) dias para o prazo e quando ele vence.
 - **Perfil Certificadora** (crie em Usuários): acesso **somente** aos lotes já enviados. Ela baixa os históricos,
-  registra cada certificado (número e data) ou "todos os pendentes"; o lote se conclui sozinho e o aluno é avisado.
+  registra cada certificado (número e data) ou "todos os pendentes"; o lote se conclui sozinho.
+- **Certificado digital**: ao **anexar o PDF** do certificado (certificadora ou equipe), ele é guardado na pasta do
+  aluno, enviado a ele **por e-mail com o PDF anexo** e fica para download no portal. A equipe pode reenviar por e-mail
+  ou **registrar uma entrega feita por fora** (WhatsApp etc.). Só o certificado digital é controlado (o físico não).
 
 ## Avisos por e-mail
 
@@ -126,6 +137,31 @@ Sem SMTP configurado, os avisos ficam só registrados. `AVISOS_EMAIL=false` desl
 No portal, em **Meus dados**: campos vazios (e o telefone) o aluno preenche direto; alterar um dado já preenchido
 vira uma solicitação que a secretaria aprova ou recusa em **Documentos** (ou na página do aluno). O CPF só a
 secretaria altera.
+
+## Importação da planilha antiga
+
+Importação única da "CONTROLE DE ALUNOS" (uma aba por turma, "Notas XX" e "Historico XX"), para abandonar a planilha:
+
+```bash
+npm run importar:planilha -w apps/api -- "C:\caminho\CONTROLE DE ALUNOS - PLANILHA.xlsx"            # simulação
+npm run importar:planilha -w apps/api -- "C:\caminho\CONTROLE DE ALUNOS - PLANILHA.xlsx" --aplicar  # grava
+```
+
+- A simulação não grava nada: mostra o resumo e salva um relatório detalhado em `apps/api/storage/importacao/<data>/`
+  (fora do git, porque tem nomes e CPFs): linhas ignoradas (sem CPF/CPF inválido), repetidas, notas cujo nome não
+  bate com a aba da turma e textos de certificado não entendidos.
+- **Turmas**: uma por aba, com o código da aba (TF4, B7...). Nome, curso, resolução e os **módulos com docente e
+  titulação** vêm da aba "Historico"; o período é a data final que mais se repete na aba, com 18 meses.
+- **Alunos**: um por CPF (os zeros perdidos na planilha são recuperados). CPF repetido na mesma turma: fica a linha
+  Em dia/Quitada, depois Trial, depois as demais. Endereços deslocados de coluna são corrigidos.
+- **Matrículas**: nº de matrícula, situação, data de entrada, cancelamento e migração.
+- **Documentos** marcados "SIM" entram como **aprovados** ("Conferido na planilha antiga"), com o link da pasta antiga
+  do Drive; o arquivo continua lá.
+- **Notas**: casadas pelo nome do aluno com a aba da turma; frequência 100%.
+- **Lotes antigos**: um por mês de envio à certificadora, com a entrega do certificado digital quando registrada.
+  Ficam marcados como "planilha antiga" e não geram alertas de prazo.
+- Nenhum e-mail é enviado aos alunos durante a importação. Depois, o semáforo é recalculado e o histórico final é
+  gerado para quem já concluiu todos os módulos. Pode rodar de novo: o que já existe não é duplicado nem sobrescrito.
 
 ## Integrações opcionais
 

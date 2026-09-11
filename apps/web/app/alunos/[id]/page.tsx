@@ -5,10 +5,12 @@ import { useRouter } from 'next/navigation';
 import { useCallback, useEffect, useState } from 'react';
 import { AlertTriangle, ExternalLink, FileDown, Pencil, Trash2 } from 'lucide-react';
 import { abrirArquivo, api, ApiError } from '../../lib/api';
-import { formatarData, formatarDataHora, formatarNota, formatarNumero, mascararCpf } from '../../lib/formato';
+import { formatarData, formatarDataHora, formatarNota, mascararCpf } from '../../lib/formato';
 import {
+  CORES_SITUACAO_MATRICULA,
   ROTULOS_CONDICAO,
   ROTULOS_DOCUMENTO,
+  ROTULOS_SITUACAO_MATRICULA,
   situacaoDisciplina,
   type Aluno,
   type AlunoDetalhe,
@@ -21,7 +23,9 @@ import { ChecklistDocumentos, ListaDocumentos, statusDoTipo, UploadDocumento } f
 import { LinkAcessoAluno } from '../../components/LinkAcessoAluno';
 import { PastaDrive } from '../../components/PastaDrive';
 import { ListaSolicitacoes } from '../../components/Solicitacoes';
-import { Aviso, Cabecalho, Carregando, Cartao, SemaforoBadge, SituacaoTexto, useMensagem, Vazio } from '../../components/ui';
+import { Aviso, Cabecalho, Carregando, Cartao, cls, SemaforoBadge, SituacaoTexto, useMensagem, Vazio } from '../../components/ui';
+
+const simNaoTexto = (valor: boolean | null) => (valor === null ? '-' : valor ? 'Sim' : 'Não');
 
 export default function AlunoDetalhePage({ params }: { params: { id: string } }) {
   const router = useRouter();
@@ -124,8 +128,21 @@ export default function AlunoDetalhePage({ params }: { params: { id: string } })
     ['Filiação', aluno.filiacao ?? '-'],
     ['RG', [aluno.rgNumero, aluno.rgOrgaoEmissor].filter(Boolean).join(' - ') || '-'],
     ['Graduação', ROTULOS_CONDICAO[aluno.condicaoGraduacao]],
+    [
+      'Endereço',
+      [
+        [aluno.enderecoRua, aluno.enderecoNumero, aluno.enderecoComplemento].filter(Boolean).join(', '),
+        aluno.enderecoBairro,
+        [aluno.enderecoCidade, aluno.enderecoEstado].filter(Boolean).join('/'),
+        aluno.enderecoCep,
+      ]
+        .filter(Boolean)
+        .join(' · ') || '-',
+    ],
+    ['Grupo do WhatsApp', simNaoTexto(aluno.grupoWhatsapp)],
+    ['Ganhou camiseta', simNaoTexto(aluno.ganhouCamiseta)],
     ['ID na Cademi', aluno.cademiId ?? 'Ainda não vinculado'],
-    ['Cadastro', aluno.inscricaoOnline ? 'Pelo link de inscrição' : 'Pela secretaria'],
+    ['Cadastro', aluno.importadoEm ? 'Importado da planilha antiga' : aluno.inscricaoOnline ? 'Pelo link de inscrição' : 'Pela secretaria'],
   ];
 
   return (
@@ -189,9 +206,7 @@ export default function AlunoDetalhePage({ params }: { params: { id: string } })
 
       <Cartao
         titulo="Matrículas e notas"
-        descricao={`Aprovação em cada módulo: nota ≥ ${formatarNota(aluno.regras.mediaMinima)} (0 a 100)${
-          aluno.regras.frequenciaMinima > 0 ? ` e frequência ≥ ${aluno.regras.frequenciaMinima}%` : ''
-        }.`}
+        descricao={`Aprovação em cada módulo: nota ≥ ${formatarNota(aluno.regras.mediaMinima)} (0 a 100). Curso EAD: frequência sempre 100%.`}
         acoes={
           equipe && turmasDisponiveis.length ? (
             <div className="flex gap-2">
@@ -218,12 +233,24 @@ export default function AlunoDetalhePage({ params }: { params: { id: string } })
               <div key={matricula.id} className="rounded-xl border border-slate-200">
                 <div className="flex flex-wrap items-center justify-between gap-3 border-b border-slate-100 p-4">
                   <div>
-                    <Link href={`/turmas/${matricula.turma.id}`} className="link">
-                      {matricula.turma.nome}
-                    </Link>
+                    <div className="flex flex-wrap items-center gap-2">
+                      <Link href={`/turmas/${matricula.turma.id}`} className="link">
+                        {matricula.turma.nome}
+                      </Link>
+                      <span
+                        className={cls('rounded-full border px-2 py-0.5 text-xs font-medium', CORES_SITUACAO_MATRICULA[matricula.situacao])}
+                        title="Situação mantida pelo financeiro"
+                      >
+                        {ROTULOS_SITUACAO_MATRICULA[matricula.situacao]}
+                      </span>
+                      {matricula.entrouPorMigracao ? <span className="text-xs text-slate-500">entrou por migração</span> : null}
+                      {matricula.saiuPorMigracao ? <span className="text-xs text-amber-700">saiu por migração</span> : null}
+                    </div>
                     <p className="text-xs text-slate-500">
-                      {formatarData(matricula.turma.dataInicio)} a {formatarData(matricula.turma.dataFim)} · matriculado em{' '}
+                      {matricula.numeroMatricula ? `Matrícula nº ${matricula.numeroMatricula} · ` : ''}
+                      {formatarData(matricula.turma.dataInicio)} a {formatarData(matricula.turma.dataFim)} · entrou em{' '}
                       {formatarData(matricula.dataInclusao)}
+                      {matricula.dataCancelamento ? ` · cancelada em ${formatarData(matricula.dataCancelamento)}` : ''}
                     </p>
                     {matricula.historicoGeradoEm ? (
                       <p className="mt-1 text-xs font-medium text-emerald-700">
@@ -271,7 +298,6 @@ export default function AlunoDetalhePage({ params }: { params: { id: string } })
                           <th>Módulo</th>
                           <th className="text-center">CH</th>
                           <th className="text-center">Nota</th>
-                          <th className="text-center">Frequência</th>
                           <th className="text-center">Situação</th>
                         </tr>
                       </thead>
@@ -285,7 +311,6 @@ export default function AlunoDetalhePage({ params }: { params: { id: string } })
                               </td>
                               <td className="text-center text-slate-600">{disciplina.cargaHoraria}h</td>
                               <td className="text-center">{formatarNota(nota?.media)}</td>
-                              <td className="text-center">{nota?.frequencia != null ? `${formatarNumero(nota.frequencia, 0)}%` : '-'}</td>
                               <td className="text-center">
                                 <SituacaoTexto situacao={situacaoDisciplina(nota, aluno.regras)} />
                               </td>

@@ -2,8 +2,9 @@ import { config } from '../config';
 import { prisma } from '../lib/prisma';
 import { gerarLinkAcessoAluno } from '../lib/acessoAluno';
 import { ROTULOS_CAMPOS, type CampoEditavel } from '../lib/correcaoDados';
-import { emailHabilitado, enviarEmail } from '../lib/mailer';
+import { emailHabilitado, enviarEmail, type Anexo } from '../lib/mailer';
 import { avaliarDocumentacao, dadosFaltantesHistorico, ROTULOS_DOCUMENTO } from '../lib/semaforo';
+import { lerArquivoCompleto } from '../lib/storage';
 
 type Mensagem = { titulo: string; paragrafos: string[]; botao?: { texto: string; link: string } };
 
@@ -32,10 +33,11 @@ type Aviso = {
   alunoId?: string | null;
   /** Com referência, o mesmo aviso (tipo + referência + destinatário) só é enviado uma vez */
   referencia?: string | null;
+  anexos?: Anexo[];
 };
 
 /** Envia e registra um aviso. Nunca lança erro: avisos não podem derrubar a operação principal. */
-export const enviarAviso = async ({ para, tipo, assunto, mensagem, alunoId = null, referencia = null }: Aviso) => {
+export const enviarAviso = async ({ para, tipo, assunto, mensagem, alunoId = null, referencia = null, anexos }: Aviso) => {
   if (!config.avisos.email) return false;
 
   try {
@@ -44,7 +46,7 @@ export const enviarAviso = async ({ para, tipo, assunto, mensagem, alunoId = nul
     const { texto, html } = montarEmail(mensagem);
     let erro: string | null = null;
     try {
-      await enviarEmail({ para, assunto, texto, html });
+      await enviarEmail({ para, assunto, texto, html, anexos });
     } catch (falha) {
       erro = (falha as Error).message;
     }
@@ -143,32 +145,47 @@ export const avisarModulosConcluidos = seguro('módulos concluídos', async (mat
   });
 });
 
-export const avisarCertificadoEmitido = seguro('certificado emitido', async (itemLoteId: string) => {
-  const item = await prisma.itemLote.findUnique({
-    where: { id: itemLoteId },
-    include: { matricula: { include: { aluno: { select: { id: true, nome: true, email: true } }, turma: { select: { nome: true } } } } },
-  });
-  if (!item?.certificadoEmitidoEm) return;
-  const { aluno, turma } = item.matricula;
+/**
+ * Entrega o certificado digital: e-mail ao aluno com o PDF anexo. Cada PDF é enviado uma vez, a não ser
+ * que se peça o reenvio. Devolve true só se o e-mail saiu de fato (com SMTP configurado).
+ */
+export const enviarCertificadoAluno = async (itemLoteId: string, { reenviar = false } = {}) => {
+  try {
+    const item = await prisma.itemLote.findUnique({
+      where: { id: itemLoteId },
+      include: { matricula: { include: { aluno: { select: { id: true, nome: true, email: true } }, turma: { select: { nome: true } } } } },
+    });
+    if (!item?.certificadoRef) return false;
+    const { aluno, turma } = item.matricula;
 
-  await enviarAviso({
-    para: aluno.email,
-    alunoId: aluno.id,
-    tipo: 'CERTIFICADO_EMITIDO',
-    referencia: itemLoteId,
-    assunto: 'Seu certificado foi emitido',
-    mensagem: {
-      titulo: 'Certificado emitido',
-      paragrafos: [
-        `Olá, ${primeiroNome(aluno.nome)}!`,
-        `O certificado de ${turma.nome} foi emitido pela certificadora em ${formatarData(item.certificadoEmitidoEm)}${
-          item.certificadoNumero ? ` (nº ${item.certificadoNumero})` : ''
-        }.`,
-        'A secretaria entrará em contato com as orientações de entrega.',
-      ],
-    },
-  });
-});
+    const enviado = await enviarAviso({
+      para: aluno.email,
+      alunoId: aluno.id,
+      tipo: 'CERTIFICADO_EMITIDO',
+      referencia: reenviar ? null : `${itemLoteId}:${item.certificadoRef}`,
+      assunto: 'Seu certificado digital',
+      mensagem: {
+        titulo: 'Certificado emitido',
+        paragrafos: [
+          `Olá, ${primeiroNome(aluno.nome)}!`,
+          `O seu certificado de ${turma.nome} foi emitido${item.certificadoEmitidoEm ? ` em ${formatarData(item.certificadoEmitidoEm)}` : ''}${
+            item.certificadoNumero ? ` (nº ${item.certificadoNumero})` : ''
+          } e está anexado a este e-mail.`,
+          'Ele também fica disponível para download no portal do aluno.',
+        ],
+        botao: { texto: 'Abrir o portal do aluno', link: await linkDoPortal(aluno.id) },
+      },
+      anexos: [{ nome: item.certificadoNomeArquivo ?? 'certificado.pdf', conteudo: await lerArquivoCompleto(item.certificadoRef), tipo: 'application/pdf' }],
+    });
+
+    const saiu = enviado && emailHabilitado();
+    if (saiu) await prisma.itemLote.update({ where: { id: itemLoteId }, data: { certificadoEnviadoEm: new Date(), certificadoCanal: 'email' } });
+    return saiu;
+  } catch (erro) {
+    console.error('[avisos] certificado digital:', erro);
+    return false;
+  }
+};
 
 export const avisarSolicitacaoAnalisada = seguro('solicitação analisada', async (solicitacaoId: string) => {
   const solicitacao = await prisma.solicitacaoAlteracao.findUnique({
@@ -234,7 +251,7 @@ export const enviarLembretesPendencias = async (agora = new Date()) => {
   const alunos = await prisma.aluno.findMany({
     where: {
       criadoEm: { lt: limite }, // quem acabou de se inscrever ainda não recebe lembrete
-      matriculas: { some: { turma: { ativa: true } } },
+      matriculas: { some: { turma: { ativa: true }, situacao: { not: 'CANCELADO' } } },
       OR: [{ ultimoLembreteEm: null }, { ultimoLembreteEm: { lt: limite } }],
     },
     include: { documentos: { select: { tipo: true, status: true } } },
@@ -272,7 +289,8 @@ export const enviarLembretesPendencias = async (agora = new Date()) => {
 /** Avisa a equipe quando o prazo de um lote está perto de vencer ou já venceu (uma vez cada). */
 export const verificarPrazosLotes = async (agora = new Date()) => {
   const lotes = await prisma.loteCertificacao.findMany({
-    where: { status: 'ENVIADO', prazoEm: { not: null } },
+    // Lotes reconstruídos da planilha antiga não geram alertas
+    where: { status: 'ENVIADO', prazoEm: { not: null }, importado: false },
     include: { itens: { where: { certificadoEmitidoEm: null }, select: { id: true } } },
   });
   if (!lotes.length) return 0;

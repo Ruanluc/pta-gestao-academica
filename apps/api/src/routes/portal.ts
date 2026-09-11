@@ -12,7 +12,9 @@ import {
 } from '../lib/acessoAluno';
 import { registrarAuditoria } from '../lib/audit';
 import { HttpError } from '../lib/errors';
+import { contentDisposition } from '../lib/http';
 import { criarLimitador } from '../lib/rateLimit';
+import { abrirArquivo } from '../lib/storage';
 import { calcularSemaforo, documentosObrigatorios } from '../lib/semaforo';
 import { cpfSchema, dataOpcional, emailSchema, idParams, textoObrigatorio, textoOpcional } from '../lib/validation';
 import { classificarAlteracoes } from '../lib/correcaoDados';
@@ -60,12 +62,15 @@ export const portalRoutes: FastifyPluginAsync = async (app) => {
         include: {
           documentos: {
             orderBy: { criadoEm: 'desc' },
-            select: { id: true, tipo: true, nomeArquivo: true, tamanho: true, status: true, motivoRejeicao: true, criadoEm: true },
+            select: { id: true, tipo: true, nomeArquivo: true, mimeType: true, tamanho: true, status: true, motivoRejeicao: true, criadoEm: true },
           },
           notas: { select: { disciplinaId: true, media: true, frequencia: true } },
           matriculas: {
             orderBy: { dataInclusao: 'desc' },
-            select: { turma: { select: { nome: true, dataInicio: true, dataFim: true, disciplinas: { select: { id: true } } } } },
+            select: {
+              turma: { select: { nome: true, dataInicio: true, dataFim: true, disciplinas: { select: { id: true } } } },
+              itemLote: { select: { id: true, certificadoEmitidoEm: true, certificadoRef: true } },
+            },
           },
           solicitacoes: { orderBy: { criadoEm: 'desc' }, take: 1 },
         },
@@ -92,6 +97,9 @@ export const portalRoutes: FastifyPluginAsync = async (app) => {
         documentosObrigatorios: documentosObrigatorios(aluno.condicaoGraduacao),
         documentos: aluno.documentos,
         turmas: aluno.matriculas.map(({ turma }) => ({ nome: turma.nome, dataInicio: turma.dataInicio, dataFim: turma.dataFim })),
+        certificados: aluno.matriculas.flatMap(({ turma, itemLote }) =>
+          itemLote?.certificadoRef ? [{ id: itemLote.id, turma: turma.nome, emitidoEm: itemLote.certificadoEmitidoEm }] : [],
+        ),
         dados: {
           nome: aluno.nome,
           email: aluno.email,
@@ -174,6 +182,22 @@ export const portalRoutes: FastifyPluginAsync = async (app) => {
       const documento = await prisma.documento.findFirst({ where: { id, alunoId: alunoDoPortal(request).id } });
       if (!documento) throw new HttpError(404, 'Documento não encontrado');
       return responderArquivo(reply, documento);
+    });
+
+    /** Certificado digital do próprio aluno. */
+    privado.get('/certificados/:id/arquivo', async (request, reply) => {
+      const { id } = idParams.parse(request.params);
+      const item = await prisma.itemLote.findFirst({
+        where: { id, matricula: { alunoId: alunoDoPortal(request).id } },
+        select: { certificadoRef: true, certificadoNomeArquivo: true },
+      });
+      if (!item?.certificadoRef) throw new HttpError(404, 'Certificado não encontrado');
+
+      return reply
+        .header('Content-Type', 'application/pdf')
+        .header('Content-Disposition', contentDisposition(item.certificadoNomeArquivo ?? 'certificado.pdf'))
+        .header('Cache-Control', 'private, no-store')
+        .send(await abrirArquivo(item.certificadoRef));
     });
   });
 };

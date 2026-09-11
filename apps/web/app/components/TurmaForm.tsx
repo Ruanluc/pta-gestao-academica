@@ -8,7 +8,15 @@ import { Aviso, Campo, useMensagem } from './ui';
 
 const hoje = () => new Date().toISOString().slice(0, 10);
 
+/** O curso dura 18 meses: sugere a data de fim a partir do início. */
+const mais18Meses = (data: string) => {
+  const [ano, mes, dia] = data.split('-').map(Number);
+  if (!ano || !mes || !dia) return data;
+  return new Date(Date.UTC(ano, mes - 1 + 18, dia)).toISOString().slice(0, 10);
+};
+
 type FormTurma = {
+  codigo: string;
   nome: string;
   curso: string;
   resolucaoMec: string;
@@ -19,12 +27,13 @@ type FormTurma = {
 };
 
 const formInicial = (turma?: Turma): FormTurma => ({
+  codigo: turma?.codigo ?? '',
   nome: turma?.nome ?? '',
   curso: turma?.curso ?? '',
   resolucaoMec: turma?.resolucaoMec ?? '',
   cargaHoraria: String(turma?.cargaHoraria ?? 360),
   dataInicio: turma ? paraInputData(turma.dataInicio) : hoje(),
-  dataFim: turma ? paraInputData(turma.dataFim) : hoje(),
+  dataFim: turma ? paraInputData(turma.dataFim) : mais18Meses(hoje()),
   ativa: String(turma?.ativa ?? true),
 });
 
@@ -43,7 +52,12 @@ export function TurmaForm({
 
   const alterar = (evento: ChangeEvent<HTMLInputElement | HTMLSelectElement>) => {
     const { name, value } = evento.target;
-    setForm((atual) => ({ ...atual, [name]: value }));
+    setForm((atual) => {
+      const proximo = { ...atual, [name]: value };
+      // Período fixo de 18 meses: mudar o início leva o fim junto (dá para ajustar depois)
+      if (name === 'dataInicio' && atual.dataFim === mais18Meses(atual.dataInicio)) proximo.dataFim = mais18Meses(value);
+      return proximo;
+    });
   };
 
   const enviar = async (evento: FormEvent) => {
@@ -69,6 +83,10 @@ export function TurmaForm({
     <form onSubmit={enviar}>
       <Aviso mensagem={mensagem} onFechar={limpar} />
       <div className="grid gap-4 md:grid-cols-2">
+        <Campo rotulo="Código da turma" dica="Sigla usada pela equipe (ex.: B7, TF4). Não pode repetir.">
+          <input name="codigo" value={form.codigo} onChange={alterar} maxLength={20} placeholder="Ex.: B8" className="input uppercase" />
+        </Campo>
+        <div className="hidden md:block" />
         <Campo
           rotulo="Nome da turma *"
           className="md:col-span-2"
@@ -88,7 +106,7 @@ export function TurmaForm({
         <Campo rotulo="Data de início *">
           <input type="date" name="dataInicio" value={form.dataInicio} onChange={alterar} required className="input" />
         </Campo>
-        <Campo rotulo="Data de fim *">
+        <Campo rotulo="Data de fim *" dica="O período sai no histórico e é o mesmo para todos os alunos da turma (18 meses).">
           <input type="date" name="dataFim" value={form.dataFim} onChange={alterar} required className="input" />
         </Campo>
         <Campo rotulo="Situação">

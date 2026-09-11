@@ -6,16 +6,20 @@ import { autenticar, COM_LOTES, EQUIPE, exigirPerfil, usuarioLogado } from '../l
 import { HttpError } from '../lib/errors';
 import { driveHabilitado, linkPastaDrive } from '../lib/googleDrive';
 import { contentDisposition, slugificar } from '../lib/http';
+import { emailHabilitado } from '../lib/mailer';
 import { abrirArquivo } from '../lib/storage';
 import { dataObrigatoria, dataOpcional, idParams, idSchema, textoOpcional } from '../lib/validation';
 import {
   adicionarItens,
+  anexarCertificado,
   criarLote,
   enviarLote,
   excluirLote,
   gerarPastaDriveLote,
   matriculasAptas,
+  reenviarCertificadoPorEmail,
   registrarCertificado,
+  registrarEntregaManual,
   removerItem,
 } from '../services/lotes';
 
@@ -74,8 +78,11 @@ export const loteRoutes: FastifyPluginAsync = async (app) => {
 
     return {
       ...lote,
+      // O caminho interno do arquivo não sai da API
+      itens: lote.itens.map(({ certificadoRef, ...item }) => ({ ...item, temCertificado: Boolean(certificadoRef) })),
       pastaLink: lote.driveFolderId ? linkPastaDrive(lote.driveFolderId) : null,
       driveConfigurado: driveHabilitado(),
+      emailConfigurado: emailHabilitado(),
       prazoDias: config.certificacao.prazoDias,
     };
   });
@@ -135,6 +142,38 @@ export const loteRoutes: FastifyPluginAsync = async (app) => {
       await registrarCertificado(id, item.id, { emitidoEm }, usuarioLogado(request).id);
     }
     return { registrados: pendentes.length };
+  });
+
+  /** PDF do certificado digital (certificadora ou equipe): vai para a pasta do aluno e segue por e-mail para ele. */
+  app.post('/:id/itens/:itemId/certificado-arquivo', async (request) => {
+    const { id, itemId } = itemParams.parse(request.params);
+    return anexarCertificado(id, itemId, request, usuarioLogado(request).id);
+  });
+
+  app.get('/:id/itens/:itemId/certificado-arquivo', async (request, reply) => {
+    const { id, itemId } = itemParams.parse(request.params);
+    const item = await prisma.itemLote.findFirst({
+      where: { id: itemId, loteId: id, lote: filtroVisivel(request) },
+      select: { certificadoRef: true, certificadoNomeArquivo: true },
+    });
+    if (!item?.certificadoRef) throw new HttpError(404, 'Certificado não encontrado');
+
+    return reply
+      .header('Content-Type', 'application/pdf')
+      .header('Content-Disposition', contentDisposition(item.certificadoNomeArquivo ?? 'certificado.pdf'))
+      .header('Cache-Control', 'private, no-store')
+      .send(await abrirArquivo(item.certificadoRef));
+  });
+
+  /** Entrega ao aluno: reenviar por e-mail ou registrar uma entrega feita por fora do sistema. */
+  app.post('/:id/itens/:itemId/certificado-entrega', soEquipe, async (request) => {
+    const { id, itemId } = itemParams.parse(request.params);
+    const { canal, enviadoEm } = z.object({ canal: z.enum(['email', 'manual']), enviadoEm: dataOpcional }).parse(request.body ?? {});
+    const usuarioId = usuarioLogado(request).id;
+
+    if (canal === 'email') await reenviarCertificadoPorEmail(id, itemId, usuarioId);
+    else await registrarEntregaManual(id, itemId, enviadoEm ?? new Date(), usuarioId);
+    return { ok: true };
   });
 
   /** Histórico final de um aluno do lote (para quem não usa a pasta do Drive). */

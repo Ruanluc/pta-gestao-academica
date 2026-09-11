@@ -10,7 +10,8 @@
     "db:generate": "prisma generate",
     "db:migrate": "prisma migrate deploy",
     "db:migrate:dev": "prisma migrate dev",
-    "db:seed": "tsx src/scripts/seed.ts"
+    "db:seed": "tsx src/scripts/seed.ts",
+    "importar:planilha": "tsx src/scripts/importarPlanilha.ts"
   },
   "prisma": {
     "seed": "tsx src/scripts/seed.ts"
@@ -22,6 +23,7 @@
     "bcryptjs": "^2.4.3",
     "bullmq": "^5.0.0",
     "dotenv": "^16.4.5",
+    "exceljs": "^4.4.0",
     "fastify": "^4.28.1",
     "googleapis": "^130.0.0",
     "ioredis": "^5.4.1",

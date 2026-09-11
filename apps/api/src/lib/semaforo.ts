@@ -8,10 +8,11 @@ export const ROTULOS_DOCUMENTO: Record<TipoDocumento, string> = {
   DIPLOMA: 'Diploma da graduação',
   DECLARACAO_CONCLUSAO: 'Declaração de conclusão da graduação',
   DECLARACAO_MATRICULA: 'Declaração de matrícula na graduação',
+  CERTIDAO_NASCIMENTO_CASAMENTO: 'Certidão de nascimento ou casamento',
   OUTRO: 'Outro',
 };
 
-const DOCUMENTOS_BASE: TipoDocumento[] = ['RG', 'CPF', 'COMPROVANTE_ENDERECO'];
+const DOCUMENTOS_BASE: TipoDocumento[] = ['RG', 'CPF', 'CERTIDAO_NASCIMENTO_CASAMENTO', 'COMPROVANTE_ENDERECO'];
 
 /** Documentos exigidos conforme a situação do aluno na graduação. */
 export const documentosObrigatorios = (condicao: CondicaoGraduacao): TipoDocumento[] => {
@@ -53,12 +54,16 @@ export const documentacaoCompleta = (condicao: CondicaoGraduacao, documentos: Do
   return faltando.length === 0 && rejeitados.length === 0 && aguardando.length === 0;
 };
 
+/** Curso EAD: a frequência é sempre 100%. Um valor lançado (notas antigas) ainda é respeitado. */
+export const FREQUENCIA_PADRAO = 100;
+
 export const situacaoDisciplina = (
   nota: Omit<NotaResumo, 'disciplinaId'> | undefined,
   regras: Pick<RegrasAprovacao, 'mediaMinima' | 'frequenciaMinima'>,
 ): SituacaoDisciplina => {
-  if (!nota || nota.media === null || nota.frequencia === null) return 'PENDENTE';
-  return nota.media >= regras.mediaMinima && nota.frequencia >= regras.frequenciaMinima ? 'APROVADO' : 'REPROVADO';
+  if (!nota || nota.media === null) return 'PENDENTE';
+  const frequencia = nota.frequencia ?? FREQUENCIA_PADRAO;
+  return nota.media >= regras.mediaMinima && frequencia >= regras.frequenciaMinima ? 'APROVADO' : 'REPROVADO';
 };
 
 /** A turma tem todos os módulos previstos cadastrados. */
@@ -146,7 +151,7 @@ export const calcularSemaforo = (entrada: EntradaSemaforo, regras: RegrasAprovac
   const semNota = situacoes.filter((situacao) => situacao === 'PENDENTE').length;
   const reprovadas = situacoes.filter((situacao) => situacao === 'REPROVADO').length;
 
-  if (semNota > 0) pendenciasAvaliacao.push(`${semNota} módulo(s) sem nota ou frequência lançada`);
+  if (semNota > 0) pendenciasAvaliacao.push(`${semNota} módulo(s) sem nota lançada`);
   if (reprovadas > 0) pendenciasAvaliacao.push(`Reprovado em ${reprovadas} módulo(s)`);
 
   if (pendenciasDocumentacao.length > 0) {

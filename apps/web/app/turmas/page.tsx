@@ -14,7 +14,8 @@ import { Aviso, Cabecalho, Carregando, Cartao, cls, useMensagem, Vazio } from '.
 export default function TurmasPage() {
   const router = useRouter();
   const { usuario } = useUsuario();
-  const podeCadastrar = usuario.role !== 'PROFESSOR';
+  // Criar e configurar turmas é só do administrador
+  const podeCadastrar = usuario.role === 'ADMIN';
 
   const [turmas, setTurmas] = useState<Turma[] | null>(null);
   const [filtro, setFiltro] = useState<'ativas' | 'todas'>('ativas');

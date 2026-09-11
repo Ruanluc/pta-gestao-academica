@@ -16,8 +16,12 @@ const obterTransporter = () => {
 
 export const emailHabilitado = () => obterTransporter() !== null;
 
+export type Anexo = { nome: string; conteudo: Buffer; tipo?: string };
+
+type Email = { para: string; assunto: string; texto: string; html?: string; anexos?: Anexo[] };
+
 /** Envia e-mail via SMTP. Sem SMTP configurado, apenas escreve a mensagem no console da API. */
-export const enviarEmail = async ({ para, assunto, texto, html }: { para: string; assunto: string; texto: string; html?: string }) => {
+export const enviarEmail = async ({ para, assunto, texto, html, anexos = [] }: Email) => {
   const atual = obterTransporter();
 
   if (!atual) {
@@ -25,7 +29,8 @@ export const enviarEmail = async ({ para, assunto, texto, html }: { para: string
     if (config.producao) {
       console.warn(`[email] SMTP não configurado: e-mail "${assunto}" para ${para} não foi enviado`);
     } else {
-      console.info(`[email] SMTP não configurado. Mensagem para ${para}\nAssunto: ${assunto}\n${texto}`);
+      const listaAnexos = anexos.length ? `\nAnexos: ${anexos.map((anexo) => anexo.nome).join(', ')}` : '';
+      console.info(`[email] SMTP não configurado. Mensagem para ${para}\nAssunto: ${assunto}\n${texto}${listaAnexos}`);
     }
     return;
   }
@@ -36,5 +41,6 @@ export const enviarEmail = async ({ para, assunto, texto, html }: { para: string
     subject: assunto,
     text: texto,
     html,
+    attachments: anexos.map((anexo) => ({ filename: anexo.nome, content: anexo.conteudo, contentType: anexo.tipo })),
   });
 };

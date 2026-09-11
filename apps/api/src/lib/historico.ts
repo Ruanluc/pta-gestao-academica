@@ -117,7 +117,8 @@ const formatarDecimal = (valor: number) => (Number.isInteger(valor) ? String(val
 
 const formatarMedia = (valor: number | null) => (valor === null ? '-' : formatarDecimal(valor));
 
-const formatarFrequencia = (valor: number | null) => (valor === null ? '-' : `${formatarDecimal(valor)}%`);
+// Curso EAD: sem frequência lançada, vale 100%
+const formatarFrequencia = (valor: number | null) => `${formatarDecimal(valor ?? 100)}%`;
 
 /** Maior tamanho de fonte (entre máximo e mínimo) em que o texto cabe em uma linha. */
 const tamanhoQueCabe = (texto: string, fonte: PDFFont, largura: number, maximo: number, minimo: number) => {

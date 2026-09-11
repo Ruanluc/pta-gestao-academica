@@ -4,7 +4,7 @@ import { registrarAuditoria } from '../lib/audit';
 import { HttpError } from '../lib/errors';
 import { criarPastaDrive, driveHabilitado, enviarArquivoDrive, linkPastaDrive } from '../lib/googleDrive';
 import { ROTULOS_DOCUMENTO } from '../lib/semaforo';
-import { abrirArquivo } from '../lib/storage';
+import { abrirArquivo, PREFIXO_EXTERNO } from '../lib/storage';
 
 export type DependenciasDrive = {
   habilitado: () => boolean;
@@ -72,7 +72,8 @@ export const exportarPastaAluno = async (alunoId: string, usuarioId: string | nu
     let jaNoDrive = 0;
 
     for (const documento of aluno.documentos) {
-      if (documento.driveFileId || documento.arquivoRef.startsWith('drive:')) {
+      // Conferidos antes do sistema já estão na pasta antiga do Drive
+      if (documento.driveFileId || documento.arquivoRef.startsWith('drive:') || documento.arquivoRef.startsWith(PREFIXO_EXTERNO)) {
         jaNoDrive += 1;
         continue;
       }

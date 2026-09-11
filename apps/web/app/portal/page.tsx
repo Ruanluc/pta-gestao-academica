@@ -2,10 +2,11 @@
 
 import { useRouter } from 'next/navigation';
 import { useCallback, useEffect, useRef, useState, type FormEvent } from 'react';
-import { AlertTriangle, Eye, LogOut, Upload } from 'lucide-react';
+import { AlertTriangle, Award, Download, Eye, LogOut, Upload } from 'lucide-react';
 import { formatarData, formatarDataHora, formatarTamanho } from '../lib/formato';
 import { abrirArquivoPortal, clearSessaoAluno, getSessaoAluno, portalApi } from '../lib/portal';
 import {
+  MIME_EXTERNO,
   ROTULOS_CONDICAO,
   ROTULOS_DOCUMENTO,
   type CondicaoGraduacao,
@@ -18,7 +19,7 @@ import { PaginaPortal } from '../components/PaginaPortal';
 import { MeusDados, type DadosAlunoPortal, type UltimaSolicitacao } from '../components/MeusDados';
 import { Aviso, Campo, Carregando, Cartao, SemaforoBadge, StatusDocumentoBadge, useMensagem, Vazio } from '../components/ui';
 
-type DocumentoPortal = Pick<Documento, 'id' | 'tipo' | 'nomeArquivo' | 'tamanho' | 'status' | 'motivoRejeicao' | 'criadoEm'>;
+type DocumentoPortal = Pick<Documento, 'id' | 'tipo' | 'nomeArquivo' | 'mimeType' | 'tamanho' | 'status' | 'motivoRejeicao' | 'criadoEm'>;
 
 type DadosPortal = {
   nome: string;
@@ -29,6 +30,7 @@ type DadosPortal = {
   documentosObrigatorios: TipoDocumento[];
   documentos: DocumentoPortal[];
   turmas: Array<{ nome: string; dataInicio: string; dataFim: string }>;
+  certificados: Array<{ id: string; turma: string; emitidoEm: string | null }>;
   dados: DadosAlunoPortal;
   ultimaSolicitacao: UltimaSolicitacao;
 };
@@ -96,9 +98,9 @@ export default function PortalAlunoPage() {
     }
   };
 
-  const abrir = async (documentoId: string) => {
+  const abrir = async (caminho: string) => {
     try {
-      await abrirArquivoPortal(`/portal/documentos/${documentoId}/arquivo`);
+      await abrirArquivoPortal(caminho);
     } catch (falha) {
       erro(falha);
     }
@@ -149,6 +151,25 @@ export default function PortalAlunoPage() {
             )}
           </Cartao>
 
+          {dados.certificados.length ? (
+            <Cartao titulo="Certificado digital">
+              <ul className="divide-y divide-slate-100 rounded-xl border border-emerald-200 bg-emerald-50/40">
+                {dados.certificados.map((certificado) => (
+                  <li key={certificado.id} className="flex flex-wrap items-center justify-between gap-3 p-4">
+                    <span className="flex items-center gap-2 text-sm">
+                      <Award className="h-4 w-4 text-emerald-600" />
+                      <span className="font-medium text-slate-900">{certificado.turma}</span>
+                      {certificado.emitidoEm ? <span className="text-slate-500">emitido em {formatarData(certificado.emitidoEm)}</span> : null}
+                    </span>
+                    <button type="button" onClick={() => void abrir(`/portal/certificados/${certificado.id}/arquivo`)} className="btn btn-primario btn-sm">
+                      <Download className="h-3.5 w-3.5" /> Baixar certificado
+                    </button>
+                  </li>
+                ))}
+              </ul>
+            </Cartao>
+          ) : null}
+
           <MeusDados dados={dados.dados} ultimaSolicitacao={dados.ultimaSolicitacao} onSalvo={() => void carregar()} />
 
           <Cartao
@@ -198,15 +219,19 @@ export default function PortalAlunoPage() {
                         <StatusDocumentoBadge status={documento.status} />
                       </div>
                       <p className="mt-1 truncate text-xs text-slate-500">
-                        {documento.nomeArquivo} · {formatarTamanho(documento.tamanho)} · enviado em {formatarDataHora(documento.criadoEm)}
+                        {documento.mimeType === MIME_EXTERNO
+                          ? `Conferido pela secretaria em ${formatarData(documento.criadoEm)}`
+                          : `${documento.nomeArquivo} · ${formatarTamanho(documento.tamanho)} · enviado em ${formatarDataHora(documento.criadoEm)}`}
                       </p>
                       {documento.status === 'REJEITADO' && documento.motivoRejeicao ? (
                         <p className="mt-1 text-sm text-rose-700">Motivo da rejeição: {documento.motivoRejeicao}. Envie novamente.</p>
                       ) : null}
                     </div>
-                    <button type="button" onClick={() => void abrir(documento.id)} className="btn btn-secundario btn-sm">
-                      <Eye className="h-3.5 w-3.5" /> Abrir
-                    </button>
+                    {documento.mimeType === MIME_EXTERNO ? null : (
+                      <button type="button" onClick={() => void abrir(`/portal/documentos/${documento.id}/arquivo`)} className="btn btn-secundario btn-sm">
+                        <Eye className="h-3.5 w-3.5" /> Abrir
+                      </button>
+                    )}
                   </li>
                 ))}
               </ul>

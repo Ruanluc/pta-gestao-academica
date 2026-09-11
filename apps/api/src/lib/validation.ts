@@ -49,6 +49,12 @@ export const numeroOpcional = (min: number, max: number) =>
 
 export const booleano = z.preprocess((valor) => (valor === 'true' ? true : valor === 'false' ? false : valor), z.boolean());
 
+/** Sim / não / não informado (vazio vira null). */
+export const booleanoOpcional = z.preprocess(
+  (valor) => (valor === '' ? null : valor === 'true' ? true : valor === 'false' ? false : valor),
+  z.boolean().nullable().optional(),
+);
+
 export const emailSchema = z.string().trim().toLowerCase().email();
 
 export const idSchema = z.string().uuid();

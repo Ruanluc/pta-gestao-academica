@@ -12,6 +12,7 @@ import { enviarLinkAcessoPorEmail, gerarLinkAcessoAluno } from '../lib/acessoAlu
 import { driveHabilitado } from '../lib/googleDrive';
 import { exportarPastaAluno } from '../services/exportacaoDrive';
 import {
+  booleanoOpcional,
   cpfSchema,
   dataOpcional,
   emailSchema,
@@ -37,6 +38,19 @@ export const alunoSchema = z.object({
   condicaoGraduacao: z.nativeEnum(CondicaoGraduacao).default('CURSANDO'),
   // Vazio: é preenchido na primeira importação da Cademi, casando por CPF ou e-mail
   cademiId: textoOpcional(100),
+});
+
+/** Campos que só a equipe preenche (não aparecem na inscrição pública). */
+export const alunoInternoSchema = alunoSchema.extend({
+  enderecoRua: textoOpcional(200),
+  enderecoNumero: textoOpcional(30),
+  enderecoComplemento: textoOpcional(120),
+  enderecoBairro: textoOpcional(120),
+  enderecoCep: textoOpcional(12),
+  enderecoCidade: textoOpcional(120),
+  enderecoEstado: textoOpcional(30),
+  grupoWhatsapp: booleanoOpcional,
+  ganhouCamiseta: booleanoOpcional,
 });
 
 /** Remove campos internos (hash do link do portal) antes de responder. */
@@ -125,7 +139,7 @@ export const alunoRoutes: FastifyPluginAsync = async (app) => {
   });
 
   app.post('/', { preHandler: exigirPerfil(EQUIPE) }, async (request, reply) => {
-    const dados = alunoSchema.parse(request.body ?? {});
+    const dados = alunoInternoSchema.parse(request.body ?? {});
     const aluno = await prisma.aluno.create({ data: dados });
 
     await registrarAuditoria({
@@ -143,7 +157,7 @@ export const alunoRoutes: FastifyPluginAsync = async (app) => {
 
   app.put('/:id', { preHandler: exigirPerfil(EQUIPE) }, async (request) => {
     const { id } = idParams.parse(request.params);
-    const dados = alunoSchema.parse(request.body ?? {});
+    const dados = alunoInternoSchema.parse(request.body ?? {});
     await prisma.aluno.update({ where: { id }, data: dados });
 
     await registrarAuditoria({

@@ -49,6 +49,8 @@ export default function TurmaDetalhePage({ params }: { params: { id: string } })
   const router = useRouter();
   const { usuario } = useUsuario();
   const equipe = usuario.role !== 'PROFESSOR';
+  // Dados da turma, módulos e link de inscrição: só o administrador altera
+  const admin = usuario.role === 'ADMIN';
 
   const [turma, setTurma] = useState<TurmaDetalhe | null>(null);
   const [naoEncontrada, setNaoEncontrada] = useState(false);
@@ -194,12 +196,12 @@ export default function TurmaDetalhePage({ params }: { params: { id: string } })
         }${turma.resolucaoMec ? ` · ${turma.resolucaoMec}` : ''}`}
         acoes={
           <>
-            {equipe && !editandoTurma ? (
+            {admin && !editandoTurma ? (
               <button type="button" onClick={() => setEditandoTurma(true)} className="btn btn-secundario">
                 <Pencil className="h-4 w-4" /> Editar
               </button>
             ) : null}
-            {usuario.role === 'ADMIN' ? (
+            {admin ? (
               <button type="button" onClick={() => void excluirTurma()} className="btn btn-secundario text-rose-700">
                 <Trash2 className="h-4 w-4" /> Excluir
               </button>
@@ -239,7 +241,7 @@ export default function TurmaDetalhePage({ params }: { params: { id: string } })
                   <th>Módulo</th>
                   <th className="text-center">CH</th>
                   <th>Docente</th>
-                  {equipe ? <th className="text-right">Ações</th> : null}
+                  {admin ? <th className="text-right">Ações</th> : null}
                 </tr>
               </thead>
               <tbody>
@@ -274,7 +276,7 @@ export default function TurmaDetalhePage({ params }: { params: { id: string } })
                         {disciplina.docente ?? '—'}
                         {disciplina.titulacao ? <span className="text-xs text-slate-400"> · {disciplina.titulacao}</span> : null}
                       </td>
-                      {equipe ? (
+                      {admin ? (
                         <td>
                           <div className="flex justify-end gap-1">
                             <button type="button" disabled={ocupado || indice === 0} onClick={() => mover(indice, -1)} className="btn btn-fantasma btn-sm" title="Subir">
@@ -311,10 +313,10 @@ export default function TurmaDetalhePage({ params }: { params: { id: string } })
           </div>
         )}
 
-        {equipe && turmaCompleta ? (
+        {admin && turmaCompleta ? (
           <p className="mt-4 text-sm text-emerald-700">A turma já tem os {limiteModulos} módulos previstos.</p>
         ) : null}
-        {equipe && !turmaCompleta ? (
+        {admin && !turmaCompleta ? (
           <form onSubmit={adicionarDisciplina} className="mt-4 grid gap-2 rounded-xl border border-slate-200 bg-slate-50 p-3 md:grid-cols-7">
             <CamposDisciplina form={novaDisciplina} onChange={setNovaDisciplina} />
             <button type="submit" disabled={ocupado} className="btn btn-primario">
@@ -324,7 +326,7 @@ export default function TurmaDetalhePage({ params }: { params: { id: string } })
         ) : null}
       </Cartao>
 
-      {equipe ? <InscricaoTurma turma={turma} onAlterado={() => void carregar()} /> : null}
+      {admin ? <InscricaoTurma turma={turma} onAlterado={() => void carregar()} /> : null}
 
       {equipe ? (
         <CademiTurma

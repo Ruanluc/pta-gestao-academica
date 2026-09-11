@@ -3,7 +3,7 @@ import { randomBytes } from 'crypto';
 import { z } from 'zod';
 import { config } from '../config';
 import { prisma } from '../lib/prisma';
-import { autenticar, EQUIPE, exigirPerfil, SO_ADMIN, usuarioLogado } from '../lib/auth';
+import { autenticar, exigirPerfil, SO_ADMIN, usuarioLogado } from '../lib/auth';
 import { registrarAuditoria } from '../lib/audit';
 import { HttpError } from '../lib/errors';
 import { booleano, dataObrigatoria, idParams, textoObrigatorio, textoOpcional } from '../lib/validation';
@@ -11,6 +11,7 @@ import { booleano, dataObrigatoria, idParams, textoObrigatorio, textoOpcional } 
 const turmaSchema = z
   .object({
     nome: textoObrigatorio(2, 200),
+    codigo: z.preprocess((valor) => (typeof valor === 'string' ? valor.trim().toUpperCase() : valor), textoOpcional(20)),
     curso: textoOpcional(200),
     resolucaoMec: textoOpcional(200),
     cargaHoraria: z.coerce.number().int().positive().max(10000).default(360),
@@ -54,7 +55,7 @@ export const turmaRoutes: FastifyPluginAsync = async (app) => {
     return { ...turma, regras: config.regras };
   });
 
-  app.post('/', { preHandler: exigirPerfil(EQUIPE) }, async (request, reply) => {
+  app.post('/', { preHandler: exigirPerfil(SO_ADMIN) }, async (request, reply) => {
     const dados = turmaSchema.parse(request.body ?? {});
     const turma = await prisma.turma.create({ data: dados });
 
@@ -69,7 +70,7 @@ export const turmaRoutes: FastifyPluginAsync = async (app) => {
     return reply.code(201).send(turma);
   });
 
-  app.put('/:id', { preHandler: exigirPerfil(EQUIPE) }, async (request) => {
+  app.put('/:id', { preHandler: exigirPerfil(SO_ADMIN) }, async (request) => {
     const { id } = idParams.parse(request.params);
     const dados = turmaSchema.parse(request.body ?? {});
     const turma = await prisma.turma.update({ where: { id }, data: dados });
@@ -86,7 +87,7 @@ export const turmaRoutes: FastifyPluginAsync = async (app) => {
   });
 
   /** Abre/encerra as inscrições online e, se pedido, troca o link (o antigo deixa de funcionar). */
-  app.post('/:id/inscricao', { preHandler: exigirPerfil(EQUIPE) }, async (request) => {
+  app.post('/:id/inscricao', { preHandler: exigirPerfil(SO_ADMIN) }, async (request) => {
     const { id } = idParams.parse(request.params);
     const { abertas, gerarNovoLink } = z
       .object({ abertas: z.boolean(), gerarNovoLink: z.boolean().default(false) })

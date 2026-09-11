@@ -17,12 +17,16 @@ declare module 'fastify' {
 }
 
 export const TODOS: Role[] = ['ADMIN', 'SECRETARIA', 'PROFESSOR'];
+/** ADMIN (acesso total) e SECRETARIA (equipe de CS: alunos, documentos, notas e certificação) */
 export const EQUIPE: Role[] = ['ADMIN', 'SECRETARIA'];
+/** Configuração das turmas e módulos, usuários, auditoria e exclusões */
 export const SO_ADMIN: Role[] = ['ADMIN'];
 /** Quem acessa os lotes de certificação (a certificadora não acessa mais nada) */
 export const COM_LOTES: Role[] = ['ADMIN', 'SECRETARIA', 'CERTIFICADORA'];
+/** Situação das matrículas (o financeiro não acessa mais nada) */
+export const COM_FINANCEIRO: Role[] = ['ADMIN', 'FINANCEIRO'];
 /** Rotas da própria conta (dados do usuário, troca de senha) */
-export const QUALQUER_PERFIL: Role[] = ['ADMIN', 'SECRETARIA', 'PROFESSOR', 'CERTIFICADORA'];
+export const QUALQUER_PERFIL: Role[] = ['ADMIN', 'SECRETARIA', 'PROFESSOR', 'CERTIFICADORA', 'FINANCEIRO'];
 
 export const createToken = (payload: AuthPayload) =>
   jwt.sign({ id: payload.id, role: payload.role }, config.jwtSecret, {

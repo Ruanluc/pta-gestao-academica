@@ -8,11 +8,12 @@ import { formatarNota, mascararCpf, numeroDeCampo } from '../lib/formato';
 import { situacaoDisciplina, type Nota, type Turma, type TurmaDetalhe } from '../lib/tipos';
 import { Aviso, Cabecalho, Carregando, Cartao, cls, SituacaoTexto, useMensagem, Vazio } from '../components/ui';
 
-type Valor = { media: string; frequencia: string };
+// Curso EAD: só a nota é lançada; a frequência é sempre 100%
+type Valor = { media: string };
 type Modo = 'aluno' | 'disciplina';
 type Linha = { chave: string; titulo: string; subtitulo: string; alunoId: string; disciplinaId: string };
 
-const VAZIO: Valor = { media: '', frequencia: '' };
+const VAZIO: Valor = { media: '' };
 const chave = (alunoId: string, disciplinaId: string) => `${alunoId}:${disciplinaId}`;
 const paraTexto = (valor: number | null) => (valor === null ? '' : String(valor).replace('.', ','));
 
@@ -49,7 +50,7 @@ export default function NotasPage() {
         const mapa: Record<string, Valor> = {};
         const mapaOrigens: Record<string, Nota['origem']> = {};
         for (const nota of notas) {
-          mapa[chave(nota.alunoId, nota.disciplinaId)] = { media: paraTexto(nota.media), frequencia: paraTexto(nota.frequencia) };
+          mapa[chave(nota.alunoId, nota.disciplinaId)] = { media: paraTexto(nota.media) };
           mapaOrigens[chave(nota.alunoId, nota.disciplinaId)] = nota.origem;
         }
         setTurma(detalhe);
@@ -96,7 +97,7 @@ export default function NotasPage() {
   const alteradas = linhas.filter((linha) => {
     const atual = valores[linha.chave] ?? VAZIO;
     const original = originais[linha.chave] ?? VAZIO;
-    return atual.media !== original.media || atual.frequencia !== original.frequencia;
+    return atual.media !== original.media;
   });
 
   const alterar = (chaveLinha: string, campo: keyof Valor, valor: string) =>
@@ -112,16 +113,11 @@ export default function NotasPage() {
     for (const linha of alteradas) {
       const valor = valores[linha.chave] ?? VAZIO;
       const media = numeroDeCampo(valor.media);
-      const frequencia = numeroDeCampo(valor.frequencia);
       if (Number.isNaN(media) || (media !== null && (media < 0 || media > 100))) {
         definir({ tipo: 'erro', texto: `Nota inválida em "${linha.titulo}". Use valores de 0 a 100.` });
         return;
       }
-      if (Number.isNaN(frequencia) || (frequencia !== null && (frequencia < 0 || frequencia > 100))) {
-        definir({ tipo: 'erro', texto: `Frequência inválida em "${linha.titulo}". Use valores de 0 a 100.` });
-        return;
-      }
-      itens.push({ alunoId: linha.alunoId, disciplinaId: linha.disciplinaId, media, frequencia });
+      itens.push({ alunoId: linha.alunoId, disciplinaId: linha.disciplinaId, media });
     }
 
     setSalvando(true);
@@ -129,12 +125,12 @@ export default function NotasPage() {
       if (modo === 'aluno') {
         await api('/notas/lote', {
           method: 'PUT',
-          json: { alunoId, notas: itens.map(({ disciplinaId: id, media, frequencia }) => ({ disciplinaId: id, media, frequencia })) },
+          json: { alunoId, notas: itens.map(({ disciplinaId: id, media }) => ({ disciplinaId: id, media })) },
         });
       } else {
         await api('/notas/disciplina', {
           method: 'PUT',
-          json: { disciplinaId, notas: itens.map(({ alunoId: id, media, frequencia }) => ({ alunoId: id, media, frequencia })) },
+          json: { disciplinaId, notas: itens.map(({ alunoId: id, media }) => ({ alunoId: id, media })) },
         });
       }
       await carregarTurma(turma.id);
@@ -150,7 +146,7 @@ export default function NotasPage() {
 
   return (
     <div>
-      <Cabecalho titulo="Notas" descricao="Lance a nota da avaliação de cada módulo (0 a 100) e a frequência (%), por aluno ou por módulo." />
+      <Cabecalho titulo="Notas" descricao="Lance a nota da avaliação de cada módulo (0 a 100), por aluno ou por módulo. Curso EAD: a frequência é sempre 100%." />
       <Aviso mensagem={mensagem} onFechar={limpar} />
 
       <Cartao className="mb-6">
@@ -262,9 +258,7 @@ export default function NotasPage() {
       ) : (
         <Cartao
           titulo={modo === 'aluno' ? turma.matriculas[indiceAluno]?.aluno.nome : turma.disciplinas.find((disciplina) => disciplina.id === disciplinaId)?.nome}
-          descricao={`Aprovação em cada módulo: nota ≥ ${formatarNota(turma.regras.mediaMinima)}${
-            turma.regras.frequenciaMinima > 0 ? ` e frequência ≥ ${turma.regras.frequenciaMinima}%` : ''
-          }. Deixe em branco o que ainda não foi avaliado.${
+          descricao={`Aprovação em cada módulo: nota ≥ ${formatarNota(turma.regras.mediaMinima)}. Deixe em branco o que ainda não foi avaliado.${
             turma.regras.modulosPorTurma > 0 && turma.disciplinas.length < turma.regras.modulosPorTurma
               ? ` Atenção: a turma tem ${turma.disciplinas.length} de ${turma.regras.modulosPorTurma} módulos cadastrados.`
               : ''
@@ -283,7 +277,6 @@ export default function NotasPage() {
                 <tr>
                   <th>{modo === 'aluno' ? 'Módulo' : 'Aluno'}</th>
                   <th className="w-32 text-center">Nota (0–100)</th>
-                  <th className="w-32 text-center">Frequência (%)</th>
                   <th className="w-28 text-center">Situação</th>
                 </tr>
               </thead>
@@ -312,23 +305,8 @@ export default function NotasPage() {
                           className="input mt-0 text-center"
                         />
                       </td>
-                      <td>
-                        <input
-                          inputMode="decimal"
-                          value={valor.frequencia}
-                          onChange={(evento) => alterar(linha.chave, 'frequencia', evento.target.value)}
-                          placeholder="—"
-                          aria-label={`Frequência de ${linha.titulo}`}
-                          className="input mt-0 text-center"
-                        />
-                      </td>
                       <td className="text-center">
-                        <SituacaoTexto
-                          situacao={situacaoDisciplina(
-                            { media: numeroDeCampo(valor.media), frequencia: numeroDeCampo(valor.frequencia) },
-                            turma.regras,
-                          )}
-                        />
+                        <SituacaoTexto situacao={situacaoDisciplina({ media: numeroDeCampo(valor.media), frequencia: null }, turma.regras)} />
                       </td>
                     </tr>
                   );

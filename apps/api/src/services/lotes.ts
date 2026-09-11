@@ -1,4 +1,5 @@
 import { Readable } from 'stream';
+import type { FastifyRequest } from 'fastify';
 import { config } from '../config';
 import { prisma } from '../lib/prisma';
 import { registrarAuditoria } from '../lib/audit';
@@ -12,9 +13,13 @@ import {
   linkPastaDrive,
   removerArquivoDrive,
 } from '../lib/googleDrive';
+import { slugificar } from '../lib/http';
+import { emailHabilitado } from '../lib/mailer';
 import { avaliarDocumentacao, ROTULOS_DOCUMENTO } from '../lib/semaforo';
+import { removerArquivo, salvarArquivo } from '../lib/storage';
+import { pastaDriveEnvioAutomatico } from './academico';
 import { exportarPastaAluno } from './exportacaoDrive';
-import { avisarCertificadoEmitido, avisarCertificadorasNovoLote } from './notificacoes';
+import { avisarCertificadorasNovoLote, enviarCertificadoAluno } from './notificacoes';
 
 const mensagem = (erro: unknown) => (erro instanceof Error ? erro.message : String(erro));
 
@@ -24,7 +29,7 @@ export const referenciaDoMes = (data = new Date()) =>
 
 /**
  * Matrículas que podem ir para a certificadora: histórico final gerado (todos os módulos + dados pessoais),
- * documentação aprovada e ainda fora de qualquer lote. As demais voltam com o motivo.
+ * documentação aprovada, matrícula não cancelada e ainda fora de qualquer lote. As demais voltam com o motivo.
  */
 export const matriculasAptas = async () => {
   const candidatas = await prisma.matricula.findMany({
@@ -41,6 +46,7 @@ export const matriculasAptas = async () => {
   for (const matricula of candidatas) {
     const { faltando, rejeitados, aguardando } = avaliarDocumentacao(matricula.aluno.condicaoGraduacao, matricula.aluno.documentos);
     const pendencias = [
+      ...(matricula.situacao === 'CANCELADO' ? ['Matrícula cancelada'] : []),
       ...faltando.map((tipo) => `Falta: ${ROTULOS_DOCUMENTO[tipo]}`),
       ...rejeitados.map((tipo) => `Recusado: ${ROTULOS_DOCUMENTO[tipo]}`),
       ...aguardando.map((tipo) => `Aguardando análise: ${ROTULOS_DOCUMENTO[tipo]}`),
@@ -275,6 +281,33 @@ export const enviarLote = async (loteId: string, usuarioId: string, dependencias
   return { lote: atualizado, pasta };
 };
 
+const buscarItemDoLoteEnviado = async (loteId: string, itemId: string) => {
+  const item = await prisma.itemLote.findFirst({
+    where: { id: itemId, loteId },
+    include: {
+      lote: { select: { status: true } },
+      matricula: { select: { alunoId: true, aluno: { select: { nome: true } }, turma: { select: { nome: true } } } },
+    },
+  });
+  if (!item) throw new HttpError(404, 'Aluno não encontrado neste lote');
+  if (item.lote.status === 'ABERTO') throw new HttpError(409, 'O lote ainda não foi enviado à certificadora');
+  return item;
+};
+
+/** O lote fica concluído quando todos os certificados estão registrados (e volta a "enviado" se um for desfeito). */
+const atualizarStatusLote = async (loteId: string) => {
+  const [lote, pendentes] = await Promise.all([
+    prisma.loteCertificacao.findUnique({ where: { id: loteId }, select: { status: true } }),
+    prisma.itemLote.count({ where: { loteId, certificadoEmitidoEm: null } }),
+  ]);
+  const status = pendentes === 0 ? 'CONCLUIDO' : 'ENVIADO';
+  if (!lote || lote.status === status) return;
+  await prisma.loteCertificacao.update({
+    where: { id: loteId },
+    data: status === 'CONCLUIDO' ? { status, concluidoEm: new Date() } : { status, concluidoEm: null },
+  });
+};
+
 /** Registra (ou desfaz, com emitidoEm = null) a emissão do certificado de um aluno do lote. */
 export const registrarCertificado = async (
   loteId: string,
@@ -282,24 +315,25 @@ export const registrarCertificado = async (
   { numero, emitidoEm }: { numero?: string | null; emitidoEm: Date | null },
   usuarioId: string,
 ) => {
-  const item = await prisma.itemLote.findFirst({ where: { id: itemId, loteId }, include: { lote: { select: { status: true } } } });
-  if (!item) throw new HttpError(404, 'Aluno não encontrado neste lote');
-  if (item.lote.status === 'ABERTO') throw new HttpError(409, 'O lote ainda não foi enviado à certificadora');
+  const item = await buscarItemDoLoteEnviado(loteId, itemId);
 
   await prisma.itemLote.update({
     where: { id: itemId },
-    data: {
-      certificadoEmitidoEm: emitidoEm,
-      certificadoNumero: emitidoEm ? numero ?? null : null,
-      registradoPorId: emitidoEm ? usuarioId : null,
-    },
+    data: emitidoEm
+      ? { certificadoEmitidoEm: emitidoEm, certificadoNumero: numero ?? item.certificadoNumero ?? null, registradoPorId: usuarioId }
+      : {
+          certificadoEmitidoEm: null,
+          certificadoNumero: null,
+          registradoPorId: null,
+          certificadoRef: null,
+          certificadoNomeArquivo: null,
+          certificadoEnviadoEm: null,
+          certificadoCanal: null,
+        },
   });
+  if (!emitidoEm) await removerArquivo(item.certificadoRef);
 
-  const pendentes = await prisma.itemLote.count({ where: { loteId, certificadoEmitidoEm: null } });
-  await prisma.loteCertificacao.update({
-    where: { id: loteId },
-    data: pendentes === 0 ? { status: 'CONCLUIDO', concluidoEm: new Date() } : { status: 'ENVIADO', concluidoEm: null },
-  });
+  await atualizarStatusLote(loteId);
 
   await registrarAuditoria({
     usuarioId,
@@ -308,6 +342,73 @@ export const registrarCertificado = async (
     entidadeId: loteId,
     detalhes: { itemId, numero: numero ?? null },
   });
+};
 
-  if (emitidoEm) await avisarCertificadoEmitido(itemId);
+/**
+ * Anexa o PDF do certificado digital (certificadora ou equipe): registra a emissão se ainda não estava
+ * registrada, guarda o arquivo na pasta do aluno e envia a ele por e-mail.
+ */
+export const anexarCertificado = async (loteId: string, itemId: string, request: FastifyRequest, usuarioId: string) => {
+  const item = await buscarItemDoLoteEnviado(loteId, itemId);
+
+  const arquivo = await request.file();
+  if (!arquivo) throw new HttpError(400, 'Envie o PDF do certificado');
+  if (arquivo.mimetype !== 'application/pdf') {
+    arquivo.file.resume();
+    throw new HttpError(415, 'O certificado deve ser um arquivo PDF');
+  }
+
+  const { alunoId, aluno, turma } = item.matricula;
+  const salvo = await salvarArquivo({
+    stream: arquivo.file,
+    nomeArquivo: arquivo.filename || 'certificado.pdf',
+    mimeType: 'application/pdf',
+    subpasta: `alunos/${alunoId}`,
+    pastaDriveId: await pastaDriveEnvioAutomatico(alunoId),
+  });
+  if (arquivo.file.truncated) {
+    await removerArquivo(salvo.ref);
+    throw new HttpError(413, 'Arquivo acima do tamanho máximo permitido');
+  }
+
+  await prisma.itemLote.update({
+    where: { id: itemId },
+    data: {
+      certificadoRef: salvo.ref,
+      certificadoNomeArquivo: `certificado-${slugificar(aluno.nome)}-${slugificar(turma.nome)}.pdf`,
+      certificadoEmitidoEm: item.certificadoEmitidoEm ?? new Date(),
+      registradoPorId: item.registradoPorId ?? usuarioId,
+      // PDF novo: ainda não foi entregue
+      certificadoEnviadoEm: null,
+      certificadoCanal: null,
+    },
+  });
+  if (item.certificadoRef && item.certificadoRef !== salvo.ref) await removerArquivo(item.certificadoRef);
+
+  await atualizarStatusLote(loteId);
+  await registrarAuditoria({ usuarioId, acao: 'CERTIFICADO_ANEXADO', entidade: 'LoteCertificacao', entidadeId: loteId, detalhes: { itemId } });
+
+  const enviadoAoAluno = await enviarCertificadoAluno(itemId);
+  return { enviadoAoAluno, emailConfigurado: emailHabilitado() };
+};
+
+/** Reenvia o certificado ao aluno por e-mail. */
+export const reenviarCertificadoPorEmail = async (loteId: string, itemId: string, usuarioId: string) => {
+  const item = await buscarItemDoLoteEnviado(loteId, itemId);
+  if (!item.certificadoRef) throw new HttpError(409, 'Anexe o PDF do certificado antes de enviá-lo ao aluno');
+  if (!emailHabilitado()) throw new HttpError(503, 'O e-mail (SMTP) não está configurado. Registre a entrega manual ou configure o SMTP no .env da API.');
+
+  if (!(await enviarCertificadoAluno(itemId, { reenviar: true }))) {
+    throw new HttpError(502, 'Não foi possível enviar o e-mail. Veja o motivo nos avisos da página do aluno.');
+  }
+  await registrarAuditoria({ usuarioId, acao: 'CERTIFICADO_ENVIADO_EMAIL', entidade: 'LoteCertificacao', entidadeId: loteId, detalhes: { itemId } });
+};
+
+/** Registra uma entrega feita fora do sistema (ex.: WhatsApp, e-mail pessoal). */
+export const registrarEntregaManual = async (loteId: string, itemId: string, enviadoEm: Date, usuarioId: string) => {
+  const item = await buscarItemDoLoteEnviado(loteId, itemId);
+  if (!item.certificadoEmitidoEm) throw new HttpError(409, 'Registre a emissão do certificado antes da entrega');
+
+  await prisma.itemLote.update({ where: { id: itemId }, data: { certificadoEnviadoEm: enviadoEm, certificadoCanal: 'manual' } });
+  await registrarAuditoria({ usuarioId, acao: 'CERTIFICADO_ENTREGUE_MANUAL', entidade: 'LoteCertificacao', entidadeId: loteId, detalhes: { itemId, enviadoEm } });
 };

@@ -2,9 +2,9 @@
 
 import Link from 'next/link';
 import { useRouter } from 'next/navigation';
-import { useCallback, useEffect, useState, type FormEvent } from 'react';
-import { ExternalLink, FileDown, FolderSync, Plus, Send, Trash2 } from 'lucide-react';
-import { abrirArquivo, api, ApiError } from '../../lib/api';
+import { useCallback, useEffect, useRef, useState, type FormEvent } from 'react';
+import { ExternalLink, FileDown, FolderSync, Mail, Plus, Send, Trash2, Upload } from 'lucide-react';
+import { abrirArquivo, api, ApiError, apiUpload } from '../../lib/api';
 import { formatarData, formatarDataHora, mascararCpf } from '../../lib/formato';
 import type { ItemLote, LoteDetalhe } from '../../lib/tipos';
 import { useUsuario } from '../../components/AppShell';
@@ -21,27 +21,41 @@ const resumoPasta = (pasta: ResultadoPasta) =>
     pasta.compartilhadoCom.length ? `, compartilhada com ${pasta.compartilhadoCom.join(', ')}` : ''
   }).${pasta.falhas.length ? ` Falhas: ${pasta.falhas.map((falha) => `${falha.item} (${falha.erro})`).join('; ')}.` : ''}`;
 
+type ResultadoAnexo = { enviadoAoAluno: boolean; emailConfigurado: boolean };
+
+/**
+ * Certificado digital de um aluno do lote: registrar a emissão, anexar o PDF (vai para a pasta do aluno e
+ * segue por e-mail para ele) e acompanhar a entrega.
+ */
 function RegistroCertificado({
   item,
   loteId,
   podeRegistrar,
+  equipe,
+  emailConfigurado,
   onAlterado,
 }: {
   item: ItemLote;
   loteId: string;
   podeRegistrar: boolean;
+  equipe: boolean;
+  emailConfigurado: boolean;
   onAlterado: () => void;
 }) {
   const [numero, setNumero] = useState('');
   const [data, setData] = useState(hoje);
   const [salvando, setSalvando] = useState(false);
+  const [aviso, setAviso] = useState('');
+  const campoArquivo = useRef<HTMLInputElement>(null);
   const { mensagem, erro, limpar } = useMensagem();
 
-  const enviar = async (corpo: { numero?: string; emitidoEm: string }) => {
+  const executar = async (acao: () => Promise<string | void>) => {
     setSalvando(true);
     limpar();
+    setAviso('');
     try {
-      await api(`/lotes/${loteId}/itens/${item.id}/certificado`, { method: 'PATCH', json: corpo });
+      const texto = await acao();
+      if (texto) setAviso(texto);
       onAlterado();
     } catch (falha) {
       erro(falha);
@@ -50,45 +64,125 @@ function RegistroCertificado({
     }
   };
 
+  const registrar = (corpo: { numero?: string; emitidoEm: string }) =>
+    executar(async () => {
+      await api(`/lotes/${loteId}/itens/${item.id}/certificado`, { method: 'PATCH', json: corpo });
+    });
+
+  const anexar = (arquivo: File | undefined) => {
+    if (!arquivo) return;
+    const dados = new FormData();
+    dados.append('arquivo', arquivo);
+    void executar(async () => {
+      const resultado = await apiUpload<ResultadoAnexo>(`/lotes/${loteId}/itens/${item.id}/certificado-arquivo`, dados);
+      if (campoArquivo.current) campoArquivo.current.value = '';
+      if (resultado.enviadoAoAluno) return 'PDF anexado e enviado ao aluno por e-mail.';
+      return resultado.emailConfigurado
+        ? 'PDF anexado, mas o e-mail ao aluno falhou. Veja os avisos na página do aluno.'
+        : 'PDF anexado. O e-mail não está configurado: entregue ao aluno e registre a entrega.';
+    });
+  };
+
+  const entregar = (canal: 'email' | 'manual') => {
+    if (canal === 'manual' && !window.confirm('Registrar que o certificado já foi entregue ao aluno por fora do sistema (hoje)?')) return;
+    void executar(async () => {
+      await api(`/lotes/${loteId}/itens/${item.id}/certificado-entrega`, { method: 'POST', json: { canal } });
+      return canal === 'email' ? 'Certificado enviado por e-mail.' : 'Entrega registrada.';
+    });
+  };
+
+  const baixar = async () => {
+    try {
+      await abrirArquivo(`/lotes/${loteId}/itens/${item.id}/certificado-arquivo`);
+    } catch (falha) {
+      erro(falha);
+    }
+  };
+
+  const seletorArquivo = (
+    <>
+      <input ref={campoArquivo} type="file" accept="application/pdf" className="hidden" onChange={(evento) => anexar(evento.target.files?.[0])} />
+      <button type="button" disabled={salvando} onClick={() => campoArquivo.current?.click()} className="btn btn-secundario btn-sm">
+        <Upload className="h-3.5 w-3.5" /> {item.temCertificado ? 'Trocar PDF' : 'Anexar PDF'}
+      </button>
+    </>
+  );
+
+  const retorno = (
+    <>
+      {aviso ? <p className="text-xs text-emerald-700">{aviso}</p> : null}
+      {mensagem ? <p className="text-xs text-rose-700">{mensagem.texto}</p> : null}
+    </>
+  );
+
   if (item.certificadoEmitidoEm) {
     return (
-      <div>
+      <div className="space-y-1.5">
         <p className="text-sm font-medium text-emerald-700">
           Emitido em {formatarData(item.certificadoEmitidoEm)}
           {item.certificadoNumero ? ` · nº ${item.certificadoNumero}` : ''}
         </p>
-        {podeRegistrar ? (
-          <button
-            type="button"
-            disabled={salvando}
-            onClick={() => {
-              if (window.confirm('Desfazer o registro deste certificado?')) void enviar({ emitidoEm: '' });
-            }}
-            className="text-xs text-slate-500 hover:text-rose-700 hover:underline"
-          >
-            desfazer
-          </button>
-        ) : null}
+        <p className="text-xs text-slate-500">
+          {item.certificadoEnviadoEm
+            ? `Entregue ao aluno em ${formatarData(item.certificadoEnviadoEm)} (${item.certificadoCanal === 'email' ? 'e-mail do sistema' : 'registro manual'})`
+            : item.temCertificado
+              ? 'PDF anexado, ainda não entregue ao aluno'
+              : 'Sem o PDF do certificado'}
+        </p>
+        <div className="flex flex-wrap items-center gap-1.5">
+          {item.temCertificado ? (
+            <button type="button" onClick={() => void baixar()} className="btn btn-secundario btn-sm">
+              <FileDown className="h-3.5 w-3.5" /> PDF
+            </button>
+          ) : null}
+          {podeRegistrar ? seletorArquivo : null}
+          {equipe && item.temCertificado && emailConfigurado ? (
+            <button type="button" disabled={salvando} onClick={() => entregar('email')} className="btn btn-fantasma btn-sm">
+              <Mail className="h-3.5 w-3.5" /> {item.certificadoEnviadoEm ? 'Reenviar' : 'Enviar'} por e-mail
+            </button>
+          ) : null}
+          {equipe && !item.certificadoEnviadoEm ? (
+            <button type="button" disabled={salvando} onClick={() => entregar('manual')} className="btn btn-fantasma btn-sm">
+              Registrar entrega
+            </button>
+          ) : null}
+          {podeRegistrar ? (
+            <button
+              type="button"
+              disabled={salvando}
+              onClick={() => {
+                if (window.confirm('Desfazer o registro deste certificado? O PDF anexado também é removido.')) void registrar({ emitidoEm: '' });
+              }}
+              className="text-xs text-slate-500 hover:text-rose-700 hover:underline"
+            >
+              desfazer
+            </button>
+          ) : null}
+        </div>
+        {retorno}
       </div>
     );
   }
 
   if (!podeRegistrar) return <span className="text-xs text-slate-500">Aguardando envio do lote</span>;
 
-  const registrar = (evento: FormEvent) => {
+  const enviarFormulario = (evento: FormEvent) => {
     evento.preventDefault();
-    void enviar({ numero, emitidoEm: data });
+    void registrar({ numero, emitidoEm: data });
   };
 
   return (
-    <form onSubmit={registrar} className="flex flex-wrap items-center gap-1.5">
-      <input value={numero} onChange={(evento) => setNumero(evento.target.value)} placeholder="Nº (opcional)" className="input mt-0 w-28 py-1 text-xs" />
-      <input type="date" value={data} onChange={(evento) => setData(evento.target.value)} required className="input mt-0 w-36 py-1 text-xs" />
-      <button type="submit" disabled={salvando} className="btn btn-primario btn-sm">
-        Registrar
-      </button>
-      {mensagem ? <span className="w-full text-xs text-rose-700">{mensagem.texto}</span> : null}
-    </form>
+    <div className="space-y-1.5">
+      <form onSubmit={enviarFormulario} className="flex flex-wrap items-center gap-1.5">
+        <input value={numero} onChange={(evento) => setNumero(evento.target.value)} placeholder="Nº (opcional)" className="input mt-0 w-28 py-1 text-xs" />
+        <input type="date" value={data} onChange={(evento) => setData(evento.target.value)} required className="input mt-0 w-36 py-1 text-xs" />
+        <button type="submit" disabled={salvando} className="btn btn-primario btn-sm">
+          Registrar
+        </button>
+        {seletorArquivo}
+      </form>
+      {retorno}
+    </div>
   );
 }
 
@@ -195,6 +289,7 @@ export default function LoteDetalhePage({ params }: { params: { id: string } }) 
         descricao={
           <span className="flex flex-wrap items-center gap-3">
             <StatusLoteBadge status={lote.status} />
+            {lote.importado ? <span className="rounded-full bg-slate-100 px-2 py-0.5 text-xs text-slate-600">Importado da planilha antiga</span> : null}
             <span>{lote.itens.length} aluno(s)</span>
             {lote.enviadoEm ? <span>enviado em {formatarDataHora(lote.enviadoEm)}</span> : null}
             {lote.prazoEm ? (
@@ -286,7 +381,7 @@ export default function LoteDetalhePage({ params }: { params: { id: string } }) 
                   <th>Aluno</th>
                   <th>Turma</th>
                   <th>Histórico</th>
-                  <th>Certificado</th>
+                  <th>Certificado digital</th>
                   {equipe && aberto ? <th /> : null}
                 </tr>
               </thead>
@@ -310,7 +405,14 @@ export default function LoteDetalhePage({ params }: { params: { id: string } }) 
                       </button>
                     </td>
                     <td>
-                      <RegistroCertificado item={item} loteId={lote.id} podeRegistrar={!aberto} onAlterado={() => void carregar()} />
+                      <RegistroCertificado
+                        item={item}
+                        loteId={lote.id}
+                        podeRegistrar={!aberto}
+                        equipe={equipe}
+                        emailConfigurado={lote.emailConfigurado}
+                        onAlterado={() => void carregar()}
+                      />
                     </td>
                     {equipe && aberto ? (
                       <td className="text-right">
